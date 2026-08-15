@@ -66,6 +66,18 @@ public record MetadataType(string Name)
     public MetadataType? UnderlyingType { get; init; }
     public List<(MetadataType Type, string Name)> TemplateParts { get; set; } = new List<(MetadataType Type, string Name)>();
     public bool IsAbstract { get; internal set; } = false;
+
+    /// <summary>
+    /// Full names of all base types in the class hierarchy (excluding this type itself).
+    /// </summary>
+    public string[] BaseTypeFullNames { get; internal set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Full names of all interfaces implemented by this type, including those inherited from base types.
+    /// </summary>
+    public string[] InterfaceFullNames { get; internal set; } = Array.Empty<string>();
+
+    public bool IsInterface { get; internal set; }
 }
 
 public enum MetadataTypeCtorArgument
@@ -78,6 +90,6 @@ public enum MetadataTypeCtorArgument
 }
 
 [DebuggerDisplay("{Name} from {DeclaringType}")]
-public record MetadataProperty(string Name, MetadataType? Type, MetadataType? DeclaringType, bool IsAttached, bool IsStatic, bool HasGetter, bool HasSetter);
+public record MetadataProperty(string Name, MetadataType? Type, MetadataType? DeclaringType, bool IsAttached, bool IsStatic, bool HasGetter, bool HasSetter, string? TypeFullName = null);
 
 public record MetadataEvent(string Name, MetadataType? Type, MetadataType? DeclaringType, bool IsAttached);

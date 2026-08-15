@@ -471,6 +471,10 @@ namespace AvaloniaVS.Services
 
                         break;
                     }
+                case StartDesignerSessionMessage sessionMessage:
+                    {
+                        break;
+                    }
             }
 
             _log.Verbose("Finished PreviewerProcess.OnMessageAsync()");

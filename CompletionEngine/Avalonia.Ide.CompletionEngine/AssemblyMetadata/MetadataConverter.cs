@@ -77,7 +77,19 @@ public static class MetadataConverter
             HasHintValues = type.IsEnum,
             IsGeneric = type.IsGeneric,
             IsAbstract = type.IsAbstract,
+            IsInterface = type.IsInterface,
         };
+
+        var baseTypes = new List<string>();
+        var interfaces = type.Interfaces.ToList();
+        for (var def = type.GetBaseType(); def != null; def = def.GetBaseType())
+        {
+            baseTypes.Add(def.FullName);
+            interfaces.AddRange(def.Interfaces);
+        }
+        mt.BaseTypeFullNames = baseTypes.Distinct().ToArray();
+        mt.InterfaceFullNames = interfaces.Distinct().ToArray();
+
         if (mt.IsEnum)
             mt.HintValues = type.EnumValues.ToArray();
         return mt;
@@ -231,9 +243,17 @@ public static class MetadataConverter
 
                     var propertyType = GetType(types, prop.TypeFullName, prop.QualifiedTypeFullName);
 
+                    // Since Avalonia 11, StyledElement.Classes (and Flyout.FlyoutPresenterClasses) are
+                    // read-only CLR properties, but the XAML compiler still supports the Classes
+                    // attribute via a special transformer that adds to the collection. Treat
+                    // properties of type Avalonia.Controls.Classes as settable so that the
+                    // Classes attribute keeps showing up in completions.
+                    var hasSetter = prop.HasPublicSetter ||
+                        (!prop.IsStatic && prop.TypeFullName == "Avalonia.Controls.Classes");
+
                     var p = new MetadataProperty(prop.Name, propertyType,
                         currentType, false, prop.IsStatic, prop.HasPublicGetter,
-                        prop.HasPublicSetter);
+                        hasSetter, prop.TypeFullName);
 
                     type.Properties.Add(p);
                 }

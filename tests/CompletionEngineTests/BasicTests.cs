@@ -24,6 +24,22 @@ namespace CompletionEngineTests
         }
 
         [Fact]
+        public void Classes_Property_Should_Be_Completed()
+        {
+            var compl = GetCompletionsFor("<Button C");
+
+            Assert.Contains(compl.Completions, c => c.DisplayText == "Classes");
+        }
+
+        [Fact]
+        public void Classes_Property_Should_Be_Completed_In_Setter()
+        {
+            var compl = GetCompletionsFor("<Style Selector=\"Button\"><Setter Property=\"Cla");
+
+            Assert.Contains(compl.Completions, c => c.DisplayText == "Classes");
+        }
+
+        [Fact]
         public void Property_Completions_Should_Be_Unique()
         {
             var compl = GetCompletionsFor("<UserControl P");
@@ -57,6 +73,43 @@ namespace CompletionEngineTests
         }
 
         [Fact]
+        public void AttachedProperty_Full_Name_Should_Be_Completed()
+        {
+            // Typing a type prefix in attribute position should directly offer
+            // "Grid.Row" instead of requiring the intermediate "Grid." step.
+            var compl = GetCompletionsFor("<UserControl Gri");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "Grid.Row=\"\"");
+            Assert.Contains(compl.Completions, c => c.InsertText == "Grid.Column=\"\"");
+        }
+
+        [Fact]
+        public void AttachedProperty_Full_Name_Should_Be_Completed_For_Single_Type()
+        {
+            AssertSingleCompletion("<UserControl ", "Gri", "Grid.Row=\"\"");
+        }
+
+        [Fact]
+        public void AttachedProperty_Full_Name_Should_Be_Available_On_Fresh_Attribute()
+        {
+            // Visual Studio only filters the completion list built when the session opened
+            // (with an empty attribute name), so the direct "Type.Property" completions must
+            // be present even there.
+            var compl = GetCompletionsFor("<Border ");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "Grid.Row=\"\"");
+            Assert.Contains(compl.Completions, c => c.InsertText == "FlyoutBase.AttachedFlyout=\"\"");
+        }
+
+        [Fact]
+        public void AttachedProperty_Full_Name_Should_Be_Completed_For_Abstract_Type()
+        {
+            var compl = GetCompletionsFor("<Border Fly");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "FlyoutBase.AttachedFlyout=\"\"");
+        }
+
+        [Fact]
         public void AttachedProperty_Should_Be_Completed()
         {
             AssertSingleCompletion("<UserControl Grid.", "Ro", "Row=\"\"");
@@ -72,6 +125,137 @@ namespace CompletionEngineTests
         public void XmlContent_AttachedProperty_Should_Be_Completed()
         {
             AssertSingleCompletion("<UserControl><Grid.", "Ro", "Row");
+        }
+
+        [Fact]
+        public void Abstract_Type_With_Attached_Properties_Should_Be_Completed()
+        {
+            // FlyoutBase is abstract but declares the AttachedFlyout attached property,
+            // so it must be offered as a completion to allow <FlyoutBase.AttachedFlyout>.
+            var compl = GetCompletionsFor("<UserControl><Flyout");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "FlyoutBase");
+        }
+
+        [Fact]
+        public void Abstract_Type_Attached_Property_Should_Be_Completed()
+        {
+            AssertSingleCompletion("<UserControl><FlyoutBase.", "A", "AttachedFlyout");
+        }
+
+        [Fact]
+        public void Property_Element_Child_Should_Be_Filtered_By_Property_Type()
+        {
+            // Inside <ContentControl.ContentTemplate> only types assignable to IDataTemplate are valid,
+            // so unrelated controls must not be offered.
+            var compl = GetCompletionsFor("<ContentControl.ContentTemplate><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "DataTemplate");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Button");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Grid");
+        }
+
+        [Fact]
+        public void Property_Element_Child_Should_Be_Filtered_For_Styles()
+        {
+            // Inside <UserControl.Styles> only types assignable to IStyle (Style, ControlTheme, ...) are valid.
+            var compl = GetCompletionsFor("<UserControl.Styles><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "Style");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Button");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "DataTemplate");
+        }
+
+        [Fact]
+        public void Property_Element_Child_Should_Be_Filtered_For_DataTemplates()
+        {
+            var compl = GetCompletionsFor("<Window.DataTemplates><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "DataTemplate");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Button");
+        }
+
+        [Fact]
+        public void Property_Element_Child_Should_Be_Filtered_For_Flyout()
+        {
+            // Inside <Button.Flyout> only FlyoutBase-derived types are valid.
+            var compl = GetCompletionsFor("<Button.Flyout><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "Flyout");
+            Assert.Contains(compl.Completions, c => c.InsertText == "MenuFlyout");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "DataTemplate");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Button");
+        }
+
+        [Fact]
+        public void Property_Element_Child_Should_Not_Be_Filtered_For_Resources()
+        {
+            // Resources may hold arbitrary objects, so all element types remain available.
+            var compl = GetCompletionsFor("<UserControl.Resources><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "Button");
+            Assert.Contains(compl.Completions, c => c.InsertText == "SolidColorBrush");
+        }
+
+        [Fact]
+        public void Property_Element_Child_Single_Completion_Should_Work()
+        {
+            // Once the prefix is narrowed, the assignable type should complete in one step.
+            AssertSingleCompletion("<ContentControl.ContentTemplate><", "DataTemp", "DataTemplate");
+        }
+
+        [Fact]
+        public void Style_Element_Children_Should_Be_IStyle_Or_SetterBase()
+        {
+            // A <Style> element may only contain nested styles/themes (IStyle) and setters (SetterBase).
+            var compl = GetCompletionsFor("<Style><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "Style");
+            Assert.Contains(compl.Completions, c => c.InsertText == "ControlTheme");
+            Assert.Contains(compl.Completions, c => c.InsertText == "FluentTheme");
+            Assert.Contains(compl.Completions, c => c.InsertText == "Setter");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Button");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "DataTemplate");
+        }
+
+        [Fact]
+        public void ControlTheme_Element_Children_Should_Be_IStyle_Or_SetterBase()
+        {
+            var compl = GetCompletionsFor("<ControlTheme><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "Style");
+            Assert.Contains(compl.Completions, c => c.InsertText == "ControlTheme");
+            Assert.Contains(compl.Completions, c => c.InsertText == "Setter");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Button");
+        }
+
+        [Fact]
+        public void Style_Element_Children_Single_Completion_Should_Work()
+        {
+            AssertSingleCompletion("<Style><", "Sett", "Setter");
+        }
+
+        [Fact]
+        public void Template_Property_Element_Child_Should_Be_Filtered()
+        {
+            // Inside <TemplatedControl.Template> only types assignable to ITemplate<Control>
+            // (i.e. ControlTemplate) are valid.
+            var compl = GetCompletionsFor("<TemplatedControl.Template><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "ControlTemplate");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Button");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Style");
+        }
+
+        [Fact]
+        public void Theme_Property_Element_Child_Should_Be_Filtered()
+        {
+            // Inside <Control.Theme> only ControlTheme is valid.
+            var compl = GetCompletionsFor("<Control.Theme><");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "ControlTheme");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Button");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "Setter");
         }
 
         [Fact]

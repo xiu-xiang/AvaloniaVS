@@ -280,8 +280,29 @@ public class CompletionEngine
                     }
                     completions.Add(new Completion("!--", "!---->", CompletionKind.Comment) { RecommendedCursorOffset = 3 });
                 }
-                completions.AddRange(Helper.FilterTypes(tagName)
-                    .Where(kvp => !kvp.Value.IsAbstract)
+                var elementTypes = Helper.FilterTypes(tagName)
+                    .Where(kvp => !kvp.Value.IsAbstract
+                        || kvp.Value.HasAttachedProperties
+                        || kvp.Value.HasAttachedEvents);
+
+                // Inside a property element (e.g. <ContentControl.ContentTemplate>) only child types
+                // that can be assigned to the property's expected type are valid - a property element
+                // must contain an object assignable to the property, so all unrelated control types
+                // would be invalid XAML. Similarly <Style>/<ControlTheme> elements may only contain
+                // IStyle (nested styles/themes) and SetterBase (setters) children. Filter them out,
+                // but always keep markup extensions. If the filter would remove every concrete type,
+                // fall back to the unfiltered list so that completions are never made worse.
+                if (GetConstrainedChildTypeFullNames(state) is { } constrainedChildTypes)
+                {
+                    var filtered = elementTypes
+                        .Where(kvp => kvp.Value.IsMarkupExtension
+                            || constrainedChildTypes.Any(t => IsElementAssignableTo(kvp.Value, t)))
+                        .ToList();
+                    if (filtered.Any(kvp => !kvp.Value.IsMarkupExtension))
+                        elementTypes = filtered;
+                }
+
+                completions.AddRange(elementTypes
                     .Select(kvp =>
                         {
                             var ci = GetElementCompletionInfo(kvp.Key, kvp.Value);
@@ -352,9 +373,24 @@ public class CompletionEngine
                         {
                             completions.Add(new("xmlns:", CompletionKind.Class));
                         }
-                        completions.AddRange(
-                            Helper.FilterTypeNames(attributeName, withAttachedPropertiesOrEventsOnly: true)
-                                .Select(v => new Completion(v, v + ".", v, CompletionKind.Class)));
+                        var attachedPropertyOwnerTypes = Helper.FilterTypes(attributeName, withAttachedPropertiesOrEventsOnly: true).ToList();
+                        completions.AddRange(attachedPropertyOwnerTypes
+                            .Select(v => new Completion(v.Key, v.Key + ".", v.Key, CompletionKind.Class)));
+                        // Also offer the attached properties directly as e.g. "Grid.Row" so that they
+                        // can be completed in one step instead of picking "Grid." first. These are always
+                        // included (not only when the prefix matches a few types) because Visual Studio
+                        // only filters the list computed when the completion session was opened, so the
+                        // full list must contain them from the start.
+                        completions.AddRange(attachedPropertyOwnerTypes
+                            .SelectMany(kvp => kvp.Value.Properties
+                                .Where(p => p.IsAttached && p.HasSetter)
+                                .Select(p =>
+                                {
+                                    var displayText = kvp.Key + "." + p.Name;
+                                    return new Completion(displayText, displayText + attributeSuffix, displayText,
+                                        CompletionKind.AttachedProperty,
+                                        displayText.Length + attributeOffset);
+                                })));
                     }
                 }
             }
@@ -628,6 +664,75 @@ public class CompletionEngine
             }
         }
         return new(xamlName, insertText, default, recommendedCursorOffset, triggerCompletionAfterInsert);
+    }
+
+    /// <summary>
+    /// When completing child elements, returns the full names of the types the child must be assignable
+    /// to, or null when no filtering should be applied (e.g. unknown parent, or a type such as object
+    /// that accepts anything). Handles both property elements (e.g. <ContentControl.ContentTemplate>
+    /// must contain an IDataTemplate) and constrained container elements (<Style>/<ControlTheme> may
+    /// only contain IStyle and SetterBase children).
+    /// </summary>
+    private IReadOnlyList<string>? GetConstrainedChildTypeFullNames(XmlParser state)
+    {
+        if (state.GetParentTagName(1) is not string parentTag)
+            return null;
+
+        // A <Style> or <ControlTheme> element may only contain nested styles/themes (IStyle)
+        // and setters (SetterBase) as direct child elements.
+        if (parentTag.IndexOf('.') == -1)
+        {
+            return parentTag switch
+            {
+                "Style" => new[] { "Avalonia.Styling.IStyle", "Avalonia.Styling.SetterBase" },
+                "ControlTheme" => new[] { "Avalonia.Styling.IStyle", "Avalonia.Styling.SetterBase" },
+                _ => null,
+            };
+        }
+
+        var dotPos = parentTag.IndexOf('.');
+        var ownerName = parentTag.Substring(0, dotPos);
+        var propName = parentTag.Substring(dotPos + 1);
+
+        if (Helper.LookupType(ownerName) is not { } ownerType)
+            return null;
+
+        var prop = ownerType.Properties.FirstOrDefault(p => p.Name == propName);
+        if (prop is null)
+            return null;
+
+        // Resources may hold arbitrary objects (e.g. <UserControl.Resources><SolidColorBrush x:Key=.../>),
+        // so never restrict them.
+        if (prop.Name == "Resources")
+            return null;
+
+        var fullName = prop.Type?.FullName ?? prop.TypeFullName;
+        if (string.IsNullOrEmpty(fullName))
+            return null;
+
+        // Collections contain items of a different type than the collection itself, so map
+        // known collections to their item type.
+        var requiredChildType = fullName switch
+        {
+            "Avalonia.Styling.Styles" => "Avalonia.Styling.IStyle",
+            "Avalonia.Controls.Templates.DataTemplates" => "Avalonia.Controls.Templates.IDataTemplate",
+            "Avalonia.Controls.Controls" => "Avalonia.Controls.Control",
+            "Avalonia.Styling.Setters" => "Avalonia.Styling.ISetter",
+            "System.Object" or "object" => null,
+            _ => fullName,
+        };
+        return requiredChildType is null ? null : new[] { requiredChildType };
+    }
+
+    private static bool IsElementAssignableTo(MetadataType candidate, string requiredFullName)
+    {
+        if (string.Equals(candidate.FullName, requiredFullName, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (candidate.BaseTypeFullNames.Contains(requiredFullName, StringComparer.OrdinalIgnoreCase))
+            return true;
+        if (candidate.InterfaceFullNames.Contains(requiredFullName, StringComparer.OrdinalIgnoreCase))
+            return true;
+        return false;
     }
 
     private void ProcessStyleSetter(string setterPropertyName, XmlParser state, List<Completion> completions, string? currentAssemblyName)

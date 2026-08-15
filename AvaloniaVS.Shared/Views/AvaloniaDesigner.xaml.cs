@@ -699,7 +699,7 @@ namespace AvaloniaVS.Views
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                ShowError("Invalid Markup", "Check the Error List for more information.");
+                //ShowError("Invalid Markup", "Check the Error List for more information.");
             }
             else if (Process.Error == null)
             {
