@@ -63,6 +63,19 @@
       <SubType>Designer</SubType>
     </None>
   </ItemGroup>
+  <Target Name="PreCreateVsixContainer" BeforeTargets="GetVsixSourceItems">
+    <ItemGroup>
+      <_TemplatePackage Include="$(NuGetPackageRoot)\$(AvaloniaTemplatesPackageName.ToLowerInvariant())\$(AvaloniaTemplatesPackageVersion)\$(AvaloniaTemplatesPackageName.ToLowerInvariant()).$(AvaloniaTemplatesPackageVersion).nupkg" />
+    </ItemGroup>
+    <Error Text="No template files found." Condition="@(_TemplatePackage->Count()) == 0" />
+    <Message Text="Template nuget packages found: @(_TemplatePackage)" Importance="low" />
+  <!-- don't modify the following, the pkgdef file uses the path below -->
+    <ItemGroup>
+      <VSIXSourceItem Include="@(_TemplatePackage)">
+        <VSIXSubPath>ProjectTemplates\</VSIXSubPath>
+      </VSIXSourceItem>
+    </ItemGroup>
+  </Target>
   <ItemGroup>
     <PackageReference Include="Avalonia.Remote.Protocol" Version="12.1.0" />
     <PackageReference Include="Microsoft.CodeAnalysis">
@@ -106,6 +119,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\templates\ProjectTemplatesDownloader\ProjectTemplatesDownloader.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" Name="ProjectTemplatesDownloader" />
     <ProjectReference Include="..\CompletionEngine\Avalonia.Ide.CompletionEngine.DnlibMetadataProvider\Avalonia.Ide.CompletionEngine.DnlibMetadataProvider.csproj">
       <Project>{5f0f9262-3527-46af-acf6-986b7f7b4c90}</Project>
       <Name>Avalonia.Ide.CompletionEngine.DnlibMetadataProvider</Name>
@@ -114,6 +128,12 @@
       <Project>{cd7db042-4282-4dfb-9910-958036dd621d}</Project>
       <Name>Avalonia.Ide.CompletionEngine</Name>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Templates.pkgdef">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
   </ItemGroup>
   <Import Project="..\AvaloniaVS.Shared\AvaloniaVS.Shared.projitems" Label="Shared" />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
