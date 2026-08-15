@@ -14,6 +14,13 @@ public interface IAssemblyInformation
     IEnumerable<string> InternalsVisibleTo { get; }
     string AssemblyName { get; }
     string PublicKey { get; }
+
+    /// <summary>
+    /// Style classes defined by XAML class selectors compiled into this assembly
+    /// (e.g. <c>Selector="Button.primary"</c> or <c>Selector="^.accent"</c> inside a ControlTheme).
+    /// Item1 is the selector's target type full name, or null for a global (type-less) class selector.
+    /// </summary>
+    IEnumerable<(string? TypeFullName, string ClassName)> StyleClasses { get; }
 }
 
 public interface ICustomAttributeInformation

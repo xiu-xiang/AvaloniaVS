@@ -12,6 +12,16 @@ public class Metadata
     public IReadOnlyDictionary<string, Dictionary<string, MetadataType>> Namespaces => _namespaces;
     public IReadOnlyDictionary<string, string> InverseNamespace => _inverseNamespace;
 
+    /// <summary>
+    /// Style classes keyed by the full name of their selector's target type.
+    /// </summary>
+    public Dictionary<string, HashSet<string>> StyleClasses { get; } = new();
+
+    /// <summary>
+    /// Style classes declared without a target type (e.g. <c>Selector=".myClass"</c>), valid on any element.
+    /// </summary>
+    public HashSet<string> GlobalStyleClasses { get; } = new();
+
     public void AddType(string ns, MetadataType type)
     {
         _namespaces.GetOrCreate(ns)[type.Name] = type;
@@ -29,6 +39,14 @@ public class Metadata
         foreach (var x in metadata._inverseNamespace)
             if (!_inverseNamespace.ContainsKey(x.Key))
                 _inverseNamespace.Add(x.Key, x.Value);
+        foreach (var kv in metadata.StyleClasses)
+        {
+            if (StyleClasses.TryGetValue(kv.Key, out var existing))
+                existing.UnionWith(kv.Value);
+            else
+                StyleClasses.Add(kv.Key, new HashSet<string>(kv.Value));
+        }
+        GlobalStyleClasses.UnionWith(metadata.GlobalStyleClasses);
     }
 }
 

@@ -32,6 +32,98 @@ namespace CompletionEngineTests
         }
 
         [Fact]
+        public void Classes_Attribute_Should_Complete_Style_Classes()
+        {
+            var compl = GetCompletionsFor("<Button Classes=\"");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "myClass");
+            Assert.Contains(compl.Completions, c => c.InsertText == "other");
+            Assert.Contains(compl.Completions, c => c.InsertText == "ctAccent");
+            Assert.Contains(compl.Completions, c => c.InsertText == "globalClass");
+        }
+
+        [Fact]
+        public void Classes_Attribute_Should_Complete_Base_Type_Classes()
+        {
+            // Control.baseClass is defined in TestCompiledTheme.xaml and must be offered on Button.
+            var compl = GetCompletionsFor("<Button Classes=\"");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "baseClass");
+        }
+
+        [Fact]
+        public void Classes_Attribute_Should_Filter_By_Prefix()
+        {
+            var compl = GetCompletionsFor("<Button Classes=\"my");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "myClass");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "other");
+        }
+
+        [Fact]
+        public void Classes_Attribute_Should_Not_Include_Classes_Of_Other_Types()
+        {
+            var compl = GetCompletionsFor("<TextBlock Classes=\"");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "myClass");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "other");
+        }
+
+        [Fact]
+        public void Classes_Attribute_Should_Only_Include_Globals_When_No_Type_Classes()
+        {
+            var compl = GetCompletionsFor("<Border Classes=\"");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "globalClass");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "myClass");
+        }
+
+        [Fact]
+        public void Classes_Attribute_Should_Complete_After_Existing_Class()
+        {
+            // Start position must be at the cursor (after the space), not at the first class.
+            AssertSingleCompletion("<Button Classes=\"myClass ", "", "other");
+        }
+
+        [Fact]
+        public void Classes_Binding_Attribute_Should_Complete_Style_Classes()
+        {
+            // Classes.className="{Binding}" - completion must fire after the dot.
+            var compl = GetCompletionsFor("<Button Classes.");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "myClass=\"\"");
+            Assert.Contains(compl.Completions, c => c.InsertText == "other=\"\"");
+            Assert.Contains(compl.Completions, c => c.InsertText == "ctAccent=\"\"");
+            Assert.Contains(compl.Completions, c => c.InsertText == "globalClass=\"\"");
+        }
+
+        [Fact]
+        public void Classes_Binding_Attribute_Should_Filter_By_Prefix()
+        {
+            var compl = GetCompletionsFor("<Button Classes.my");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "myClass=\"\"");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "other=\"\"");
+        }
+
+        [Fact]
+        public void Classes_Binding_Attribute_Should_Not_Include_Classes_Of_Other_Types()
+        {
+            var compl = GetCompletionsFor("<TextBlock Classes.");
+
+            Assert.Contains(compl.Completions, c => c.InsertText == "myClass=\"\"");
+            Assert.DoesNotContain(compl.Completions, c => c.InsertText == "other=\"\"");
+        }
+
+        [Fact]
+        public void Classes_Binding_Attribute_Should_Start_After_The_Dot()
+        {
+            var compl = GetCompletionsFor("<Button Classes.");
+
+            Assert.Equal("<Button Classes.".Length, compl.StartPosition);
+        }
+
+        [Fact]
         public void Classes_Property_Should_Be_Completed_In_Setter()
         {
             var compl = GetCompletionsFor("<Style Selector=\"Button\"><Setter Property=\"Cla");

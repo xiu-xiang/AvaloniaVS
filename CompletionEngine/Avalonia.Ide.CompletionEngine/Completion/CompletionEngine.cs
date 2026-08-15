@@ -334,11 +334,24 @@ public class CompletionEngine
                 var dotPos = attributeName.IndexOf('.');
                 curStart += dotPos + 1;
                 var split = attributeName.Split(new[] { '.' }, 2);
-                completions.AddRange(Helper.FilterPropertyNames(split[0], split[1], attached: true, hasSetter: true)
-                    .Select(x => new Completion(x, x + attributeSuffix, x, CompletionKind.AttachedProperty, x.Length + attributeOffset)));
 
-                completions.AddRange(Helper.FilterEventNames(split[0], split[1], attached: true)
-                    .Select(v => new Completion(v, v + attributeSuffix, v, CompletionKind.AttachedEvent, v.Length + attributeOffset)));
+                // Style class binding syntax: Classes.className="{Binding}" - complete the
+                // class name after the dot using the same candidates as Classes="...".
+                if (split[0] == "Classes" && state.TagName is not null && Helper.LookupType(state.TagName) is { } classesOwnerType)
+                {
+                    completions.AddRange(GetStyleClassCandidates(metadata, classesOwnerType)
+                        .Where(c => c.StartsWith(split[1], StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+                        .Select(c => new Completion(c, c + attributeSuffix, c, CompletionKind.Class, c.Length + attributeOffset)));
+                }
+                else
+                {
+                    completions.AddRange(Helper.FilterPropertyNames(split[0], split[1], attached: true, hasSetter: true)
+                        .Select(x => new Completion(x, x + attributeSuffix, x, CompletionKind.AttachedProperty, x.Length + attributeOffset)));
+
+                    completions.AddRange(Helper.FilterEventNames(split[0], split[1], attached: true)
+                        .Select(v => new Completion(v, v + attributeSuffix, v, CompletionKind.AttachedEvent, v.Length + attributeOffset)));
+                }
             }
             else if (state.TagName is not null)
             {
@@ -426,6 +439,22 @@ public class CompletionEngine
                     name = name.Substring(index + 1, name.Length - index - 1);
                 }
                 completions.Add(new Completion("<New Event Handler>", $"{name}_{state.AttributeName}", CompletionKind.StaticProperty));
+            }
+            else if (state.AttributeName == "Classes" && type != null)
+            {
+                // Classes is a space-separated list of style classes. Complete with the class
+                // selectors that apply to the current element's type (from its own styles,
+                // base types and interfaces) plus any global (type-less) classes.
+                var search = textToCursor.Substring(state.CurrentValueStart!.Value);
+                var lastSpace = search.LastIndexOf(' ');
+                var tokenStart = lastSpace == -1 ? 0 : lastSpace + 1;
+                var token = search.Substring(tokenStart);
+                curStart = curStart + tokenStart;
+
+                completions.AddRange(GetStyleClassCandidates(metadata, type)
+                    .Where(c => c.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+                    .Select(c => new Completion(c, CompletionKind.Class)));
             }
             else
             {
@@ -722,6 +751,26 @@ public class CompletionEngine
             _ => fullName,
         };
         return requiredChildType is null ? null : new[] { requiredChildType };
+    }
+
+    /// <summary>
+    /// Returns the style class candidates that apply to the given element type: classes
+    /// declared on the type itself, on its base types and on its interfaces, plus all
+    /// global (type-less) classes.
+    /// </summary>
+    private static HashSet<string> GetStyleClassCandidates(Metadata metadata, MetadataType type)
+    {
+        var candidates = new HashSet<string>();
+        if (metadata.StyleClasses.TryGetValue(type.FullName, out var ownClasses))
+            candidates.UnionWith(ownClasses);
+        foreach (var baseType in type.BaseTypeFullNames)
+            if (metadata.StyleClasses.TryGetValue(baseType, out var baseClasses))
+                candidates.UnionWith(baseClasses);
+        foreach (var interfaceType in type.InterfaceFullNames)
+            if (metadata.StyleClasses.TryGetValue(interfaceType, out var interfaceClasses))
+                candidates.UnionWith(interfaceClasses);
+        candidates.UnionWith(metadata.GlobalStyleClasses);
+        return candidates;
     }
 
     private static bool IsElementAssignableTo(MetadataType candidate, string requiredFullName)

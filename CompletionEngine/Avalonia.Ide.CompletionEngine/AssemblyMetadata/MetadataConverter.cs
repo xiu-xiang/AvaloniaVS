@@ -199,6 +199,20 @@ public static class MetadataConverter
             ProcessAvaloniaResources(asm, asmTypes, avaresValues);
 
             resourceUrls.AddRange(asm.ManifestResourceNames.Where(r => !skipRes(r)).Select(r => $"resm:{r}?assembly={asm.Name}"));
+
+            // Collect style classes defined by XAML class selectors in this assembly (and its
+            // compiled deferred resources) so that the Classes="" attribute can be completed.
+            foreach (var (typeFullName, className) in asm.StyleClasses)
+            {
+                if (typeFullName is null)
+                    metadata.GlobalStyleClasses.Add(className);
+                else
+                {
+                    if (!metadata.StyleClasses.TryGetValue(typeFullName, out var classes))
+                        metadata.StyleClasses[typeFullName] = classes = new HashSet<string>();
+                    classes.Add(className);
+                }
+            }
         }
 
         var at = types.Values.ToArray();

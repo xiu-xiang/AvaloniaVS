@@ -1,7 +1,26 @@
 ﻿<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="CompletionEngineTests.TestCompiledTheme"
         >
-    <Style Selector="TextBlock">
-        
+    <Styles.Resources>
+        <ControlTheme x:Key="{x:Type Button}" TargetType="Button">
+            <Style Selector="^.ctAccent">
+                <Setter Property="Background" Value="Red"/>
+            </Style>
+        </ControlTheme>
+    </Styles.Resources>
+    <Style Selector="Control.baseClass">
+        <Setter Property="Opacity" Value="0.9"/>
+    </Style>
+    <Style Selector="TextBlock.myClass">
+        <Setter Property="Foreground" Value="Red"/>
+    </Style>
+    <Style Selector="Button.myClass">
+        <Setter Property="Background" Value="Blue"/>
+    </Style>
+    <Style Selector="Button.other">
+        <Setter Property="FontSize" Value="20"/>
+    </Style>
+    <Style Selector=".globalClass">
+        <Setter Property="Opacity" Value="0.5" x:SetterTargetType="Control"/>
     </Style>
 </Styles>

@@ -11,11 +11,13 @@ internal class AssemblyWrapper : IAssemblyInformation
 {
     private readonly AssemblyDef _asm;
     private readonly DnlibMetadataProviderSession _session;
+    private readonly Lazy<List<(string? TypeFullName, string ClassName)>> _styleClasses;
 
     public AssemblyWrapper(AssemblyDef asm, DnlibMetadataProviderSession session)
     {
         _asm = asm;
         _session = session;
+        _styleClasses = new(() => StyleClassExtractor.Extract(_asm));
     }
 
     public string Name => _asm.Name;
@@ -40,6 +42,8 @@ internal class AssemblyWrapper : IAssemblyInformation
 
     public string PublicKey
         => _asm.PublicKey.ToString();
+
+    public IEnumerable<(string? TypeFullName, string ClassName)> StyleClasses => _styleClasses.Value;
 
     public override string ToString() => Name;
 }
