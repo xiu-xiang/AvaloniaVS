@@ -5,12 +5,12 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("AxamlTPreviewer")]
+[assembly: AssemblyTitle("AvaloniaTemplatedControlTemplate")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("AxamlTPreviewer")]
-[assembly: AssemblyCopyright("")]
+[assembly: AssemblyCompany("Dan Walmsley")]
+[assembly: AssemblyProduct("AvaloniaTemplatedControlTemplate")]
+[assembly: AssemblyCopyright("Copyright © Dan Walmsley 2021")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -18,6 +18,9 @@ using System.Runtime.InteropServices;
 // to COM components.  If you need to access a type in this assembly from 
 // COM, set the ComVisible attribute to true on that type.
 [assembly: ComVisible(false)]
+
+// The following GUID is for the ID of the typelib if this project is exposed to COM
+[assembly: Guid("8c4e8335-59ba-4e56-80ff-68c559e3f664")]
 
 // Version information for an assembly consists of the following four values:
 //

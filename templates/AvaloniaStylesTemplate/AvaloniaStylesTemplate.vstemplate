@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<VSTemplate Version="3.0.0" Type="Item" xmlns="http://schemas.microsoft.com/developer/vstemplate/2005" xmlns:sdk="http://schemas.microsoft.com/developer/vstemplate-sdkextension/2010">
+    <TemplateData>
+        <Name>样式 Styles (Avalonia)</Name>
+        <Description>Avalonia 样式文件（Styles）AXAML</Description>
+        <Icon>AvaloniaStylesTemplate.ico</Icon>
+        <TemplateID>bd2ab426-3ce2-4307-9393-e38d9626e1bc</TemplateID>
+        <ProjectType>CSharp</ProjectType>
+        <NumberOfParentCategoriesToRollUp>1</NumberOfParentCategoriesToRollUp>
+        <DefaultName>Styles.axaml</DefaultName>
+    </TemplateData>
+    <TemplateContent>
+        <ProjectItem ItemType="AvaloniaXaml" ReplaceParameters="true" TargetFileName="$fileinputname$.axaml">Styles.axaml</ProjectItem>
+    </TemplateContent>
+</VSTemplate>

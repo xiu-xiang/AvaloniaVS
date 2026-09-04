@@ -15,7 +15,8 @@ namespace AvaloniaVS.Services
     [Export(typeof(IAvaloniaVSSettings))]
     public class AvaloniaVSSettings : IAvaloniaVSSettings, INotifyPropertyChanged
     {
-        private const string SettingsKey = "AxamlCraft";
+        // 设置存储键，与扩展产品名保持一致
+        private const string SettingsKey = "AxamlTPreviewer";
         private readonly WritableSettingsStore _settings;
         private Orientation _designerSplitOrientation;
         private bool _designerSplitSwapped = false;

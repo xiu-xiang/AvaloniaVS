@@ -1,8 +1,9 @@
 <Project>
   <PropertyGroup>
     <AvaloniaTemplatesPackageName>Avalonia.Templates</AvaloniaTemplatesPackageName>
-    <AvaloniaTemplatesPackageVersion>11.3.0</AvaloniaTemplatesPackageVersion>
-    <AvaloniaVersion>11.3.0</AvaloniaVersion>
+    <!-- 捆绑模板与测试用 Avalonia 版本统一为 12.1.0 -->
+    <AvaloniaTemplatesPackageVersion>12.1.0</AvaloniaTemplatesPackageVersion>
+    <AvaloniaVersion>12.1.0</AvaloniaVersion>
     <LangVersion>12.0</LangVersion>
   </PropertyGroup>
 

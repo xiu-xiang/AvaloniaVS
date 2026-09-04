@@ -45,10 +45,14 @@ steps:
 - task: CopyFiles@2
   inputs:
     Contents: |
-      AvaloniaVS.VS2022\bin\Release\AvaloniaVS.VS2022.vsix
+      AvaloniaVS.VS2022\bin\Release\AxamlTPreviewer.vsix
       AvaloniaVS.VS2022\bin\Release\publishManifest.json
       AvaloniaVS.VS2022\bin\Release\overview.md
+      AvaloniaVS.VS2026\bin\Release\AxamlTPreviewer.vsix
+      AvaloniaVS.VS2026\bin\Release\publishManifest.json
+      AvaloniaVS.VS2026\bin\Release\overview.md
     TargetFolder: '$(Build.ArtifactStagingDirectory)'
+    flattenFolders: false
   condition: succeeded()
 
 - task: PublishBuildArtifacts@1

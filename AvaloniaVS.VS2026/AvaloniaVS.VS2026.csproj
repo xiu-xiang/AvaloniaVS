@@ -1,7 +1,8 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <MinimumVisualStudioVersion>17.0</MinimumVisualStudioVersion>
+    <!-- Visual Studio 2026 对应产品主版本 18 -->
+    <MinimumVisualStudioVersion>18.0</MinimumVisualStudioVersion>
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
     <UseCodebase>true</UseCodebase>
   </PropertyGroup>
@@ -15,7 +16,7 @@
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectTypeGuids>{82b43b9b-a64c-4715-b499-d71e9ca2bd60};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
-    <ProjectGuid>{1029EC08-7B2E-4018-B20D-E85CA58DEB59}</ProjectGuid>
+    <ProjectGuid>{E2974C5A-DD41-4DB0-AC1A-2FE395FF01E0}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <!-- 生成的扩展程序集名称 -->
@@ -78,6 +79,7 @@
     </ItemGroup>
   </Target>
   <ItemGroup>
+    <!-- VS2026 仍兼容 API 17.x，沿用 VS2022 SDK 包 -->
     <PackageReference Include="Avalonia.Remote.Protocol" Version="12.1.0" />
     <PackageReference Include="Microsoft.CodeAnalysis">
       <Version>4.0.1</Version>
@@ -129,6 +131,42 @@
       <Project>{cd7db042-4282-4dfb-9910-958036dd621d}</Project>
       <Name>Avalonia.Ide.CompletionEngine</Name>
     </ProjectReference>
+    <!-- 「添加新项」：Avalonia 常用项模板 -->
+    <ProjectReference Include="..\templates\AvaloniaWindowTemplate\AvaloniaWindowTemplate.csproj">
+      <Project>{c8b3ff98-50a3-4c04-8f8c-ed853ec0760c}</Project>
+      <Name>AvaloniaWindowTemplate</Name>
+      <VSIXSubPath>ItemTemplates</VSIXSubPath>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <IncludeOutputGroupsInVSIX>TemplateProjectOutputGroup%3b</IncludeOutputGroupsInVSIX>
+    </ProjectReference>
+    <ProjectReference Include="..\templates\AvaloniaUserControlTemplate\AvaloniaUserControlTemplate.csproj">
+      <Project>{3bfd12bb-e6d8-46d7-9d5f-119a9896941e}</Project>
+      <Name>AvaloniaUserControlTemplate</Name>
+      <VSIXSubPath>ItemTemplates</VSIXSubPath>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <IncludeOutputGroupsInVSIX>TemplateProjectOutputGroup%3b</IncludeOutputGroupsInVSIX>
+    </ProjectReference>
+    <ProjectReference Include="..\templates\AvaloniaTemplatedControlTemplate\AvaloniaTemplatedControlTemplate.csproj">
+      <Project>{8c4e8335-59ba-4e56-80ff-68c559e3f664}</Project>
+      <Name>AvaloniaTemplatedControlTemplate</Name>
+      <VSIXSubPath>ItemTemplates</VSIXSubPath>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <IncludeOutputGroupsInVSIX>TemplateProjectOutputGroup%3b</IncludeOutputGroupsInVSIX>
+    </ProjectReference>
+    <ProjectReference Include="..\templates\AvaloniaResourceDictionaryTemplate\AvaloniaResourceDictionaryTemplate.csproj">
+      <Project>{f7ee3a1d-ddb2-4f82-a6e7-f444a24abb62}</Project>
+      <Name>AvaloniaResourceDictionaryTemplate</Name>
+      <VSIXSubPath>ItemTemplates</VSIXSubPath>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <IncludeOutputGroupsInVSIX>TemplateProjectOutputGroup%3b</IncludeOutputGroupsInVSIX>
+    </ProjectReference>
+    <ProjectReference Include="..\templates\AvaloniaStylesTemplate\AvaloniaStylesTemplate.csproj">
+      <Project>{9fef480a-5a56-489d-ad89-53970fd2b2a1}</Project>
+      <Name>AvaloniaStylesTemplate</Name>
+      <VSIXSubPath>ItemTemplates</VSIXSubPath>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <IncludeOutputGroupsInVSIX>TemplateProjectOutputGroup%3b</IncludeOutputGroupsInVSIX>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <Content Include="Templates.pkgdef">
@@ -139,11 +177,4 @@
   <Import Project="..\AvaloniaVS.Shared\AvaloniaVS.Shared.projitems" Label="Shared" />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="'$(VSToolsPath)' != ''" />
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
-       Other similar extension points exist, see Microsoft.Common.targets.
-  <Target Name="BeforeBuild">
-  </Target>
-  <Target Name="AfterBuild">
-  </Target>
-  -->
 </Project>
