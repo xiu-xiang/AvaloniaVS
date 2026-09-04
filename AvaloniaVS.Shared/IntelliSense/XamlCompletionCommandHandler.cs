@@ -171,6 +171,13 @@ namespace AvaloniaVS.IntelliSense
 
         private bool HandleSessionCompletion(char c)
         {
+            // Tab：优先接受 Copilot/IntelliCode 幽灵文本（UI 提示「选项卡 接受」）。
+            // Avalonia 下拉会话会挡住 AcceptSuggestion，需先关闭；若无幽灵文本再回退提交 Avalonia 项。
+            if (c == '\t')
+            {
+                return HandleTabCompletion();
+            }
+
             var line = _textView.GetTextViewLineContainingBufferPosition(
                 _textView.Caret.Position.BufferPosition);
             var start = line.Start;
@@ -217,14 +224,14 @@ namespace AvaloniaVS.IntelliSense
                 || c == '\'' || c == '"' || c == '=' || c == '>' || c == '.'
                 || c == '#' || c == ')' || c == ']')
             {
-                // Filter 后常见软选中（IsSelected=false）。Tab/Enter 仍应提交当前高亮项并吞掉按键，
-                // 否则 Tab 会落入编辑器变成空格，补全却不生效（官方 IntelliCode 也是先 Tab 提交列表项）。
+                // Filter 后常见软选中（IsSelected=false）。Enter 仍应提交当前高亮项并吞掉按键。
+                // Tab 已在 HandleTabCompletion 中单独处理（优先幽灵文本）。
                 PreferAvaloniaCompletionSet(session);
                 var selection = TryGetSelectionStatus(session);
-                var forceCommitOnTabOrEnter = c is '\t' or '\n';
+                var forceCommitOnEnter = c == '\n';
                 var canCommit = IsSessionAlive(session)
                     && selection?.Completion != null
-                    && (forceCommitOnTabOrEnter || selection.IsSelected);
+                    && (forceCommitOnEnter || selection.IsSelected);
 
                 if (canCommit)
                 {
@@ -411,26 +418,7 @@ namespace AvaloniaVS.IntelliSense
                 }
                 else
                 {
-                    // Tab 且 Avalonia 下拉无高亮项时：属性值内再尝试 Copilot 幽灵文本；
-                    // 有下拉项（如 Foreground="re" → Red）时已在上方 Commit，不会进入此处。
-                    if (c == '\t')
-                    {
-                        if (IsCaretInAttributeValue())
-                        {
-                            SafeDismissAllCompletionSessions();
-                            if (TryAcceptInlineSuggestion())
-                            {
-                                return true;
-                            }
-                        }
-                        else
-                        {
-                            SafeDismissAllCompletionSessions();
-                        }
-
-                        return false;
-                    }
-
+                    // Tab 已在 HandleTabCompletion 处理；此处仅处理其它提交键
                     if (c != '\n')
                     {
                         SafeDismiss(session);
@@ -981,6 +969,94 @@ namespace AvaloniaVS.IntelliSense
         }
 
         /// <summary>
+        /// Tab 专用：先接受 Copilot 幽灵文本，失败再提交 Avalonia 下拉项。
+        /// 例如 &lt;Button| 后的灰色建议提示「选项卡 接受」。
+        /// </summary>
+        private bool HandleTabCompletion()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var session = GetActiveSession();
+            PreferAvaloniaCompletionSet(session);
+
+            // 关闭会话前先记下 Avalonia 高亮项，便于 Copilot 未接受时回退
+            Microsoft.VisualStudio.Language.Intellisense.Completion avaloniaCompletion = null;
+            ITrackingSpan applicableTo = null;
+            XamlCompletion xamlCompletion = null;
+            if (IsSessionAlive(session))
+            {
+                try
+                {
+                    avaloniaCompletion = session.SelectedCompletionSet?.SelectionStatus?.Completion;
+                    applicableTo = session.SelectedCompletionSet?.ApplicableTo;
+                    xamlCompletion = avaloniaCompletion as XamlCompletion;
+                }
+                catch (ObjectDisposedException)
+                {
+                    // 忽略
+                }
+            }
+
+            // 先试一次（少数情况下会话不阻挡）
+            if (TryAcceptInlineSuggestion())
+            {
+                SafeDismissAllCompletionSessions();
+                return true;
+            }
+
+            // Copilot 常因 IntelliSense 会话存在而忽略 Tab：先关掉再接受
+            SafeDismissAllCompletionSessions();
+            if (TryAcceptInlineSuggestion())
+            {
+                return true;
+            }
+
+            // 无幽灵文本：回退为提交 Avalonia 项（如 Foreground="re" → Red）
+            if (avaloniaCompletion != null && applicableTo != null)
+            {
+                return ApplyCompletionManually(avaloniaCompletion, applicableTo, xamlCompletion);
+            }
+
+            // 无幽灵文本也无 Avalonia 项：放行给编辑器（缩进等）
+            return false;
+        }
+
+        /// <summary>
+        /// 在会话已关闭后，按 ApplicableTo 范围手动写入补全文本。
+        /// </summary>
+        private bool ApplyCompletionManually(
+            Microsoft.VisualStudio.Language.Intellisense.Completion completion,
+            ITrackingSpan applicableTo,
+            XamlCompletion xamlCompletion)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                var snapshot = _textView.TextSnapshot;
+                var span = applicableTo.GetSpan(snapshot);
+                var insertion = xamlCompletion?.InsertionText ?? completion.InsertionText;
+                if (string.IsNullOrEmpty(insertion))
+                {
+                    return false;
+                }
+
+                using (var edit = _textView.TextBuffer.CreateEdit())
+                {
+                    edit.Replace(span, insertion);
+                    edit.Apply();
+                }
+
+                ApplyPostCommitCaretAdjustment(xamlCompletion);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 尝试接受 Copilot/IntelliCode 内联幽灵文本（Edit.AcceptSuggestion）。
         /// </summary>
         private bool TryAcceptInlineSuggestion()
@@ -991,6 +1067,7 @@ namespace AvaloniaVS.IntelliSense
             {
                 var beforeVersion = _textView.TextSnapshot.Version.VersionNumber;
                 var beforePos = _textView.Caret.Position.BufferPosition.Position;
+                var beforeLength = _textView.TextSnapshot.Length;
 
                 var dte = Package.GetGlobalService(typeof(DTE)) as DTE2;
                 if (dte == null)
@@ -1002,8 +1079,11 @@ namespace AvaloniaVS.IntelliSense
 
                 var afterVersion = _textView.TextSnapshot.Version.VersionNumber;
                 var afterPos = _textView.Caret.Position.BufferPosition.Position;
-                // 文本或光标变化说明建议已被接受
-                return afterVersion != beforeVersion || afterPos != beforePos;
+                var afterLength = _textView.TextSnapshot.Length;
+                // 文本变长或版本/光标变化，视为已接受幽灵文本
+                return afterVersion != beforeVersion
+                    || afterPos != beforePos
+                    || afterLength != beforeLength;
             }
             catch (Exception)
             {
