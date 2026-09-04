@@ -171,27 +171,6 @@ namespace AvaloniaVS.IntelliSense
 
         private bool HandleSessionCompletion(char c)
         {
-            // RowDefinitions="" 内绿色幽灵文本：先尝试 AcceptSuggestion，再安全关闭 Avalonia 会话。
-            // 注意：Dismiss 后会话已 Dispose，绝不能再读 CompletionSets/IsDismissed。
-            if (c == '\t' && IsCaretInAttributeValue())
-            {
-                // 先接受内联建议（此时会话可能仍存在；Copilot 若因会话跳过则下一步再关）
-                if (TryAcceptInlineSuggestion())
-                {
-                    SafeDismissAllCompletionSessions();
-                    return true;
-                }
-
-                SafeDismissAllCompletionSessions();
-                // 关闭会话后再试一次（Copilot 常因 IntelliSense 会话占用而忽略首次 Tab）
-                if (TryAcceptInlineSuggestion())
-                {
-                    return true;
-                }
-
-                return false;
-            }
-
             var line = _textView.GetTextViewLineContainingBufferPosition(
                 _textView.Caret.Position.BufferPosition);
             var start = line.Start;
@@ -432,10 +411,23 @@ namespace AvaloniaVS.IntelliSense
                 }
                 else
                 {
-                    // 无高亮补全项时：关掉空会话并放行 Tab，供 IntelliCode 幽灵文本接受。
+                    // Tab 且 Avalonia 下拉无高亮项时：属性值内再尝试 Copilot 幽灵文本；
+                    // 有下拉项（如 Foreground="re" → Red）时已在上方 Commit，不会进入此处。
                     if (c == '\t')
                     {
-                        SafeDismissAllCompletionSessions();
+                        if (IsCaretInAttributeValue())
+                        {
+                            SafeDismissAllCompletionSessions();
+                            if (TryAcceptInlineSuggestion())
+                            {
+                                return true;
+                            }
+                        }
+                        else
+                        {
+                            SafeDismissAllCompletionSessions();
+                        }
+
                         return false;
                     }
 
