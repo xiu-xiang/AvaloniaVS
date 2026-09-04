@@ -41,6 +41,10 @@ namespace AvaloniaVS.IntelliSense
         private readonly ITextView _textView;
         private readonly CompletionEngine _engine;
         private ICompletionSession _session;
+        // 提交后待处理的光标偏移（属性补全插入 ="" 时需移入引号内）
+        private XamlCompletion _pendingCursorCompletion;
+        // 本处理器正在 Commit，避免 Committed 事件重复调整光标
+        private bool _applyingCommitInHandler;
 
         public XamlCompletionCommandHandler(
             IServiceProvider serviceProvider,
@@ -97,6 +101,13 @@ namespace AvaloniaVS.IntelliSense
                     }
                 }
                 var result = _nextCommandHandler.Exec(ref pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
+
+                // 输入 = 后若编辑器自动补了 =""，确保光标在引号内（便于继续输入/快捷键接受值建议）
+                if (c == '=')
+                {
+                    MoveCaretInsideEmptyAttributeQuotes();
+                }
+
                 if (HandleSessionStart(c))
                 {
                     return VSConstants.S_OK;
@@ -203,15 +214,28 @@ namespace AvaloniaVS.IntelliSense
                 || c == '#' || c == ')' || c == ']')
             {
                 if (session != null && !session.IsDismissed &&
-                    session.SelectedCompletionSet.SelectionStatus.IsSelected)
+                    session.SelectedCompletionSet?.SelectionStatus?.IsSelected == true)
                 {
-                    var selected = session.SelectedCompletionSet.SelectionStatus.Completion as XamlCompletion;
+                    // 优先使用 Avalonia 补全项，避免多 CompletionSet 时拿不到 CursorOffset
+                    var selected = GetSelectedXamlCompletion(session);
 
                     var bufferPos = _textView.Caret.Position.BufferPosition;
 
-                    session.Commit();
+                    // 记录待调整项：Commit 可能走 VS 默认路径，Committed 事件中再兜底移入引号
+                    _pendingCursorCompletion = selected;
+                    _applyingCommitInHandler = true;
+                    try
+                    {
+                        session.Commit();
+                        ApplyPostCommitCaretAdjustment(selected);
+                    }
+                    finally
+                    {
+                        _applyingCommitInHandler = false;
+                        _pendingCursorCompletion = null;
+                    }
 
-                    if (selected.DeleteTextOffset is int rof)
+                    if (selected?.DeleteTextOffset is int rof)
                     {
                         var newCursorPos = bufferPos.Add(rof);
                         SnapshotSpan deleteSpan = newCursorPos < bufferPos
@@ -220,17 +244,8 @@ namespace AvaloniaVS.IntelliSense
                         _textView.TextBuffer.Delete(deleteSpan);
                     }
 
-                    if (selected?.CursorOffset > 0)
-                    {
-                        // Offset the cursor if necessary e.g. to place it within the quotation
-                        // marks of an attribute.
-                        var cursorPos = _textView.Caret.Position.BufferPosition;
-                        var newCursorPos = cursorPos - selected.CursorOffset;
-                        _textView.Caret.MoveTo(newCursorPos);
-                    }
-
                     // special-cased avoid TriggerCompletion
-                    if (selected.InsertionText == "xmlns:")
+                    if (selected?.InsertionText == "xmlns:")
                     {
                         return true;
                     }
@@ -255,9 +270,10 @@ namespace AvaloniaVS.IntelliSense
                         state == XmlParser.ParserState.AfterAttributeValue)
                     {
                         var type = _engine.Helper.LookupType(parser.TagName);
-                        if (type != null && type.Events.FirstOrDefault(x => x.Name == parser.AttributeName) != null)
+                        if (type != null && type.Events.FirstOrDefault(x => x.Name == parser.AttributeName) != null
+                            && selected?.InsertionText is { } eventMethodName)
                         {
-                            GenerateEventHandlerAsync(type.FullName, parser.AttributeName, selected.InsertionText)
+                            GenerateEventHandlerAsync(type.FullName, parser.AttributeName, eventMethodName)
                                 .FireAndForget();
                         }
                         var isSelector = parser.AttributeName?.Equals("Selector") == true;
@@ -287,10 +303,10 @@ namespace AvaloniaVS.IntelliSense
                                 // If that's a {, we apply the space, otherwise we dont
                                 // Only using the line text (up to cursor) since xaml can't wrap
                                 // Also ignore ':' for namespaces or directives
-                                var text = line.Snapshot.GetText(start, end - start);
-                                for (int i = text.Length - 1; i >= 0; i--)
+                                var attrText = line.Snapshot.GetText(start, end - start);
+                                for (int i = attrText.Length - 1; i >= 0; i--)
                                 {
-                                    var lineChar = text[i];
+                                    var lineChar = attrText[i];
                                     if (char.IsLetterOrDigit(lineChar) || lineChar == ':')
                                         continue;
 
@@ -304,7 +320,7 @@ namespace AvaloniaVS.IntelliSense
                                 // The check for '=' in the insertion text ensures we don't always get this
                                 // e.g., {OnPlatform Wind -> {OnPlatform Windows= [New completion session]
                                 // but {OnPlatform Windows=Re -> {OnPlatform Windows=Red [no new session]
-                                if (skip && selected.InsertionText.EndsWith("="))
+                                if (skip && selected?.InsertionText?.EndsWith("=") == true)
                                     TriggerCompletion();
                             }
                         }
@@ -326,8 +342,9 @@ namespace AvaloniaVS.IntelliSense
                             skip = false;
                         }
 
-                        var lastInsertionChar = (selected.InsertionText?.Length ?? 0) > 0
-                            ? selected.InsertionText[selected.InsertionText.Length - 1]
+                        var insertion = selected?.InsertionText;
+                        var lastInsertionChar = (insertion?.Length ?? 0) > 0
+                            ? insertion[insertion.Length - 1]
                             : default;
 
                         // Cases like {Binding Path= result in {Binding Path==
@@ -350,7 +367,7 @@ namespace AvaloniaVS.IntelliSense
                                 TriggerCompletion();
                         }
                     }
-                    else if (state != XmlParser.ParserState.StartElement || selected.TriggerCompletion)
+                    else if (state != XmlParser.ParserState.StartElement || selected?.TriggerCompletion == true)
                     {
                         TriggerCompletion();
                     }
@@ -464,18 +481,105 @@ namespace AvaloniaVS.IntelliSense
                 caretPoint?.Snapshot.CreateTrackingPoint(caretPoint.Value.Position, PointTrackingMode.Positive),
                 true);
 
-            // Subscribe to the Dismissed event on the session.
+            // Subscribe to the Dismissed / Committed events on the session.
+            session.Dismissed -= SessionDismissed;
             session.Dismissed += SessionDismissed;
+            session.Committed -= SessionCommitted;
+            session.Committed += SessionCommitted;
             _session = session;
-            session.Start();
+            if (existingSession == null)
+            {
+                session.Start();
+            }
             return true;
         }
 
         private void SessionDismissed(object sender, EventArgs e)
         {
-            var session = _session;
-            _session = null;
-            session.Dismissed -= SessionDismissed;
+            if (sender is ICompletionSession session)
+            {
+                session.Dismissed -= SessionDismissed;
+                session.Committed -= SessionCommitted;
+            }
+            if (ReferenceEquals(_session, sender))
+            {
+                _session = null;
+            }
+            _pendingCursorCompletion = null;
+        }
+
+        private void SessionCommitted(object sender, EventArgs e)
+        {
+            if (_applyingCommitInHandler)
+            {
+                return;
+            }
+
+            // 非本处理器 Commit 时（例如鼠标点选补全项）也要把光标移入属性引号内
+            ApplyPostCommitCaretAdjustment(_pendingCursorCompletion ?? GetSelectedXamlCompletion(sender as ICompletionSession));
+            _pendingCursorCompletion = null;
+        }
+
+        /// <summary>
+        /// 优先取 Avalonia CompletionSet 中的当前选中项。
+        /// </summary>
+        private static XamlCompletion GetSelectedXamlCompletion(ICompletionSession session)
+        {
+            if (session == null)
+            {
+                return null;
+            }
+
+            var avaloniaSet = session.CompletionSets?.FirstOrDefault(s => s.Moniker.Equals("Avalonia"));
+            if (avaloniaSet != null)
+            {
+                session.SelectedCompletionSet = avaloniaSet;
+            }
+
+            return session.SelectedCompletionSet?.SelectionStatus?.Completion as XamlCompletion;
+        }
+
+        /// <summary>
+        /// 提交补全后调整光标：按 CursorOffset，或兜底移入空属性引号内。
+        /// </summary>
+        private void ApplyPostCommitCaretAdjustment(XamlCompletion selected)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (selected?.CursorOffset > 0)
+            {
+                var cursorPos = _textView.Caret.Position.BufferPosition;
+                var newCursorPos = cursorPos - selected.CursorOffset;
+                if (newCursorPos.Position >= 0)
+                {
+                    _textView.Caret.MoveTo(newCursorPos);
+                    return;
+                }
+            }
+
+            // 兜底：插入 Name="" 后光标停在引号外时，移到两个引号之间，便于继续输入/Tab 接受值建议
+            MoveCaretInsideEmptyAttributeQuotes();
+        }
+
+        /// <summary>
+        /// 若光标紧跟在 ="" 之后，则移入引号内。
+        /// </summary>
+        private void MoveCaretInsideEmptyAttributeQuotes()
+        {
+            var pos = _textView.Caret.Position.BufferPosition;
+            if (pos.Position < 3)
+            {
+                return;
+            }
+
+            var snapshot = pos.Snapshot;
+            // 形如 ...=""|
+            if (snapshot[pos.Position - 1] == '"'
+                && snapshot[pos.Position - 2] == '"'
+                && snapshot[pos.Position - 3] == '=')
+            {
+                _textView.Caret.MoveTo(pos - 1);
+            }
         }
 
         private IEnumerable<ParameterSyntax> GetParametersList(string[] parameterTypes, string[] parameterNames)
