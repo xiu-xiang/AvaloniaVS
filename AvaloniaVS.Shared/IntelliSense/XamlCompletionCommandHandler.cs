@@ -102,6 +102,12 @@ namespace AvaloniaVS.IntelliSense
                 }
                 var result = _nextCommandHandler.Exec(ref pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
 
+                // Tab 已交给下游（IntelliCode/Copilot 等），勿再 Filter/开新会话，否则会再次抢走后续按键
+                if (c == '\t')
+                {
+                    return result;
+                }
+
                 // 输入 = 后若编辑器自动补了 =""，确保光标在引号内（便于继续输入/快捷键接受值建议）
                 if (c == '=')
                 {
@@ -129,12 +135,11 @@ namespace AvaloniaVS.IntelliSense
             // If the pressed key is a key that can start a completion session.
             if (CompletionEngine.ShouldTriggerCompletionListOn(c) || c == '\a')
             {
-                var session = _session;
-                if (session == null || session.IsDismissed)
+                if (!IsSessionAlive(_session))
                 {
                     if (TriggerCompletion() && c != '<' && c != '.' && c != ' ' && c != '[' && c != '(' && c != '|' && c != '#' && c != '/')
                     {
-                        session?.Filter();
+                        SafeFilter(_session);
                     }
 
                     return true;
@@ -142,12 +147,11 @@ namespace AvaloniaVS.IntelliSense
             }
             else if (c == ',')
             {
-                var session = _session;
-                if (session is null || session.IsDismissed)
+                if (!IsSessionAlive(_session))
                 {
                     if (TriggerCompletion())
                     {
-                        session?.Filter();
+                        SafeFilter(_session);
                     }
                     return true;
                 }
@@ -157,9 +161,9 @@ namespace AvaloniaVS.IntelliSense
 
         private bool HandleSessionUpdate()
         {
-            if (_session is { } session && !session.IsDismissed)
+            if (IsSessionAlive(_session))
             {
-                session.Filter();
+                SafeFilter(_session);
                 return true;
             }
             return false;
@@ -167,6 +171,27 @@ namespace AvaloniaVS.IntelliSense
 
         private bool HandleSessionCompletion(char c)
         {
+            // RowDefinitions="" 内绿色幽灵文本：先尝试 AcceptSuggestion，再安全关闭 Avalonia 会话。
+            // 注意：Dismiss 后会话已 Dispose，绝不能再读 CompletionSets/IsDismissed。
+            if (c == '\t' && IsCaretInAttributeValue())
+            {
+                // 先接受内联建议（此时会话可能仍存在；Copilot 若因会话跳过则下一步再关）
+                if (TryAcceptInlineSuggestion())
+                {
+                    SafeDismissAllCompletionSessions();
+                    return true;
+                }
+
+                SafeDismissAllCompletionSessions();
+                // 关闭会话后再试一次（Copilot 常因 IntelliSense 会话占用而忽略首次 Tab）
+                if (TryAcceptInlineSuggestion())
+                {
+                    return true;
+                }
+
+                return false;
+            }
+
             var line = _textView.GetTextViewLineContainingBufferPosition(
                 _textView.Caret.Position.BufferPosition);
             var start = line.Start;
@@ -176,8 +201,8 @@ namespace AvaloniaVS.IntelliSense
             // a completion, which can complete on the wrong value
             // So we only trigger on ' ' or '\t', and swallow that so it doesn't get 
             // inserted into the text buffer
-            var session = _session;
-            if (session is not null && !session.IsDismissed)
+            var session = GetActiveSession();
+            if (IsSessionAlive(session))
             {
                 var text = line.Snapshot.GetText(start, end - start);
 
@@ -185,12 +210,12 @@ namespace AvaloniaVS.IntelliSense
                 {
                     if (char.IsWhiteSpace(c))
                     {
-                        session.Commit();
+                        SafeCommit(session);
                         return true;
                     }
                     else if (c == ':')
                     {
-                        session.Dismiss();
+                        SafeDismiss(session);
                     }
 
                     return false;
@@ -213,8 +238,16 @@ namespace AvaloniaVS.IntelliSense
                 || c == '\'' || c == '"' || c == '=' || c == '>' || c == '.'
                 || c == '#' || c == ')' || c == ']')
             {
-                if (session != null && !session.IsDismissed &&
-                    session.SelectedCompletionSet?.SelectionStatus?.IsSelected == true)
+                // Filter 后常见软选中（IsSelected=false）。Tab/Enter 仍应提交当前高亮项并吞掉按键，
+                // 否则 Tab 会落入编辑器变成空格，补全却不生效（官方 IntelliCode 也是先 Tab 提交列表项）。
+                PreferAvaloniaCompletionSet(session);
+                var selection = TryGetSelectionStatus(session);
+                var forceCommitOnTabOrEnter = c is '\t' or '\n';
+                var canCommit = IsSessionAlive(session)
+                    && selection?.Completion != null
+                    && (forceCommitOnTabOrEnter || selection.IsSelected);
+
+                if (canCommit)
                 {
                     // 优先使用 Avalonia 补全项，避免多 CompletionSet 时拿不到 CursorOffset
                     var selected = GetSelectedXamlCompletion(session);
@@ -226,7 +259,7 @@ namespace AvaloniaVS.IntelliSense
                     _applyingCommitInHandler = true;
                     try
                     {
-                        session.Commit();
+                        SafeCommit(session);
                         ApplyPostCommitCaretAdjustment(selected);
                     }
                     finally
@@ -264,6 +297,12 @@ namespace AvaloniaVS.IntelliSense
                         // Don't swallow the '.' or ' ' if this is an Xml element, like
                         // Window.Resources. However do swallow tab
                         skip = false;
+                    }
+
+                    // Tab/Enter 提交后必须吞掉，禁止再写入空白字符
+                    if (c is '\t' or '\n')
+                    {
+                        skip = true;
                     }
 
                     if (state == XmlParser.ParserState.AttributeValue ||
@@ -367,7 +406,24 @@ namespace AvaloniaVS.IntelliSense
                                 TriggerCompletion();
                         }
                     }
-                    else if (state != XmlParser.ParserState.StartElement || selected?.TriggerCompletion == true)
+                    else if (selected?.TriggerCompletion == true)
+                    {
+                        TriggerCompletion();
+                    }
+                    else if (state == XmlParser.ParserState.AttributeValue)
+                    {
+                        // 仅枚举/Hints/Classes 等需要 Avalonia 值补全时开会话。
+                        // RowDefinitions 等自由文本不开会话，避免抢走 Copilot 的 Tab。
+                        if (ShouldAutoCompleteAttributeValue(parser))
+                        {
+                            TriggerCompletion();
+                        }
+                        else
+                        {
+                            SafeDismissAllCompletionSessions();
+                        }
+                    }
+                    else if (state != XmlParser.ParserState.StartElement)
                     {
                         TriggerCompletion();
                     }
@@ -376,11 +432,21 @@ namespace AvaloniaVS.IntelliSense
                 }
                 else
                 {
-                    session?.Dismiss();
+                    // 无高亮补全项时：关掉空会话并放行 Tab，供 IntelliCode 幽灵文本接受。
+                    if (c == '\t')
+                    {
+                        SafeDismissAllCompletionSessions();
+                        return false;
+                    }
+
+                    if (c != '\n')
+                    {
+                        SafeDismiss(session);
+                    }
                     return false;
                 }
             }
-            else if (c == ':' && (session != null && !session.IsDismissed))
+            else if (c == ':' && IsSessionAlive(session))
             {
                 var parser = XmlParser.Parse(_textView.TextSnapshot.GetText().AsMemory(), 0, end);
                 var state = parser.State;
@@ -389,22 +455,22 @@ namespace AvaloniaVS.IntelliSense
                     parser.AttributeName?.Equals("Selector") == true)
                 {
                     // Force new session to start to suggest pseudoclasses
-                    session.Dismiss();
+                    SafeDismiss(session);
                     return false;
                 }
             }
-            else if (c == '(' && session?.IsDismissed == false)
+            else if (c == '(' && IsSessionAlive(session))
             {
                 var parser = XmlParser.Parse(_textView.TextSnapshot.GetText().AsMemory(), 0, end);
                 var state = parser.State;
                 if ((state == XmlParser.ParserState.AttributeValue || state == XmlParser.ParserState.AfterAttributeValue)
                     && parser.AttributeName?.Equals("Selector") == true)
                 {
-                    session.Dismiss();
+                    SafeDismiss(session);
                     return false;
                 }
             }
-            else if (c == '{' && (session != null && !session.IsDismissed))
+            else if (c == '{' && IsSessionAlive(session))
             {
                 var parser = XmlParser.Parse(_textView.TextSnapshot.GetText().AsMemory(), 0, end);
                 var state = parser.State;
@@ -413,11 +479,11 @@ namespace AvaloniaVS.IntelliSense
                 {
                     // For something like Brushes, restart the completion session if we want
                     // a markup extension
-                    session.Dismiss();
+                    SafeDismiss(session);
                     return false;
                 }
             }
-            else if (c == ',' && (session != null && !session.IsDismissed))
+            else if (c == ',' && IsSessionAlive(session))
             {
                 // Typing the comma in a markup extension should trigger a new completion session
                 var text = line.Snapshot.GetText(start, end - start);
@@ -425,7 +491,7 @@ namespace AvaloniaVS.IntelliSense
                 {
                     if (text[i] == '{')
                     {
-                        session.Dismiss();
+                        SafeDismiss(session);
                         return false;
                     }
                 }
@@ -457,16 +523,34 @@ namespace AvaloniaVS.IntelliSense
             {
                 for (int i = sessions.Count - 1; i >= 0; i--)
                 {
-                    if (sessions[i].CompletionSets.Count == 0)
-                        sessions[i].Dismiss();
+                    var candidate = sessions[i];
+                    if (!IsSessionAlive(candidate))
+                    {
+                        continue;
+                    }
 
-                    var sets = sessions[i].CompletionSets;
+                    // 先读取 CompletionSets；空会话再 Dismiss。Dismiss 后绝不能再访问该对象。
+                    IList<Microsoft.VisualStudio.Language.Intellisense.CompletionSet> sets;
+                    try
+                    {
+                        sets = candidate.CompletionSets;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        continue;
+                    }
+
+                    if (sets == null || sets.Count == 0)
+                    {
+                        SafeDismiss(candidate);
+                        continue;
+                    }
 
                     for (int j = sets.Count - 1; j >= 0; j--)
                     {
                         if (sets[j].Moniker.Equals("Avalonia"))
                         {
-                            existingSession = sessions[i];
+                            existingSession = candidate;
                             break;
                         }
                     }
@@ -491,6 +575,18 @@ namespace AvaloniaVS.IntelliSense
             {
                 session.Start();
             }
+
+            // 无补全项的空会话会挡住 Copilot Tab；Dismiss 前先判断，Dismiss 后不再读会话
+            if (!SessionHasCompletions(session))
+            {
+                SafeDismiss(session);
+                if (ReferenceEquals(_session, session))
+                {
+                    _session = null;
+                }
+                return false;
+            }
+
             return true;
         }
 
@@ -498,8 +594,15 @@ namespace AvaloniaVS.IntelliSense
         {
             if (sender is ICompletionSession session)
             {
-                session.Dismissed -= SessionDismissed;
-                session.Committed -= SessionCommitted;
+                try
+                {
+                    session.Dismissed -= SessionDismissed;
+                    session.Committed -= SessionCommitted;
+                }
+                catch (ObjectDisposedException)
+                {
+                    // 会话已释放，忽略退订失败
+                }
             }
             if (ReferenceEquals(_session, sender))
             {
@@ -515,9 +618,102 @@ namespace AvaloniaVS.IntelliSense
                 return;
             }
 
-            // 非本处理器 Commit 时（例如鼠标点选补全项）也要把光标移入属性引号内
-            ApplyPostCommitCaretAdjustment(_pendingCursorCompletion ?? GetSelectedXamlCompletion(sender as ICompletionSession));
+            // Commit 后会话可能已 Dispose，勿再读 SelectedCompletionSet
+            var selected = _pendingCursorCompletion;
+            if (selected == null && IsSessionAlive(sender as ICompletionSession))
+            {
+                selected = GetSelectedXamlCompletion(sender as ICompletionSession);
+            }
+
+            ApplyPostCommitCaretAdjustment(selected);
             _pendingCursorCompletion = null;
+        }
+
+        /// <summary>
+        /// 取得当前 Avalonia 补全会话（优先 _session，否则从 Broker 查找）。
+        /// </summary>
+        private ICompletionSession GetActiveSession()
+        {
+            if (IsSessionAlive(_session))
+            {
+                return _session;
+            }
+
+            _session = null;
+            var found = FindAvaloniaSession();
+            if (found != null)
+            {
+                found.Dismissed -= SessionDismissed;
+                found.Dismissed += SessionDismissed;
+                found.Committed -= SessionCommitted;
+                found.Committed += SessionCommitted;
+                _session = found;
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// 从 Broker 中查找含 Avalonia CompletionSet 的会话。
+        /// </summary>
+        private ICompletionSession FindAvaloniaSession()
+        {
+            var sessions = _completionBroker.GetSessions(_textView);
+            for (int i = sessions.Count - 1; i >= 0; i--)
+            {
+                var candidate = sessions[i];
+                if (!IsSessionAlive(candidate))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var sets = candidate.CompletionSets;
+                    if (sets == null)
+                    {
+                        continue;
+                    }
+
+                    for (int j = sets.Count - 1; j >= 0; j--)
+                    {
+                        if (sets[j].Moniker.Equals("Avalonia"))
+                        {
+                            return candidate;
+                        }
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // 跳过已释放会话
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 将 SelectedCompletionSet 切到 Avalonia，避免选中其它集导致无法提交。
+        /// </summary>
+        private static void PreferAvaloniaCompletionSet(ICompletionSession session)
+        {
+            if (!IsSessionAlive(session))
+            {
+                return;
+            }
+
+            try
+            {
+                var avaloniaSet = session.CompletionSets?.FirstOrDefault(s => s.Moniker.Equals("Avalonia"));
+                if (avaloniaSet != null)
+                {
+                    session.SelectedCompletionSet = avaloniaSet;
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // 忽略
+            }
         }
 
         /// <summary>
@@ -525,18 +721,21 @@ namespace AvaloniaVS.IntelliSense
         /// </summary>
         private static XamlCompletion GetSelectedXamlCompletion(ICompletionSession session)
         {
-            if (session == null)
+            if (!IsSessionAlive(session))
             {
                 return null;
             }
 
-            var avaloniaSet = session.CompletionSets?.FirstOrDefault(s => s.Moniker.Equals("Avalonia"));
-            if (avaloniaSet != null)
-            {
-                session.SelectedCompletionSet = avaloniaSet;
-            }
+            PreferAvaloniaCompletionSet(session);
 
-            return session.SelectedCompletionSet?.SelectionStatus?.Completion as XamlCompletion;
+            try
+            {
+                return session.SelectedCompletionSet?.SelectionStatus?.Completion as XamlCompletion;
+            }
+            catch (ObjectDisposedException)
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -579,6 +778,245 @@ namespace AvaloniaVS.IntelliSense
                 && snapshot[pos.Position - 3] == '=')
             {
                 _textView.Caret.MoveTo(pos - 1);
+            }
+        }
+
+        /// <summary>
+        /// 安全关闭当前文本视图上所有补全会话（Dismiss 后对象已 Dispose，不可再访问）。
+        /// </summary>
+        private void SafeDismissAllCompletionSessions()
+        {
+            ICompletionSession[] sessions;
+            try
+            {
+                sessions = _completionBroker.GetSessions(_textView).ToArray();
+            }
+            catch
+            {
+                _session = null;
+                _pendingCursorCompletion = null;
+                return;
+            }
+
+            foreach (var session in sessions)
+            {
+                SafeDismiss(session);
+            }
+
+            _session = null;
+            _pendingCursorCompletion = null;
+        }
+
+        /// <summary>
+        /// 会话是否仍可用（未 Dismiss/Dispose）。
+        /// </summary>
+        private static bool IsSessionAlive(ICompletionSession session)
+        {
+            if (session == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                return !session.IsDismissed;
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+        }
+
+        private static bool SessionHasCompletions(ICompletionSession session)
+        {
+            if (!IsSessionAlive(session))
+            {
+                return false;
+            }
+
+            try
+            {
+                return session.CompletionSets != null
+                    && session.CompletionSets.Any(s => s.Completions != null && s.Completions.Count > 0);
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+        }
+
+        private static CompletionSelectionStatus TryGetSelectionStatus(ICompletionSession session)
+        {
+            if (!IsSessionAlive(session))
+            {
+                return null;
+            }
+
+            try
+            {
+                return session.SelectedCompletionSet?.SelectionStatus;
+            }
+            catch (ObjectDisposedException)
+            {
+                return null;
+            }
+        }
+
+        private static void SafeDismiss(ICompletionSession session)
+        {
+            if (session == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (!session.IsDismissed)
+                {
+                    session.Dismiss();
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // 已释放
+            }
+        }
+
+        private static void SafeCommit(ICompletionSession session)
+        {
+            if (!IsSessionAlive(session))
+            {
+                return;
+            }
+
+            try
+            {
+                session.Commit();
+            }
+            catch (ObjectDisposedException)
+            {
+                // 已释放
+            }
+        }
+
+        private static void SafeFilter(ICompletionSession session)
+        {
+            if (!IsSessionAlive(session))
+            {
+                return;
+            }
+
+            try
+            {
+                session.Filter();
+            }
+            catch (ObjectDisposedException)
+            {
+                // 已释放
+            }
+        }
+
+        /// <summary>
+        /// 光标是否在属性值内（RowDefinitions="|" 等）。
+        /// </summary>
+        private bool IsCaretInAttributeValue()
+        {
+            try
+            {
+                var pos = _textView.Caret.Position.BufferPosition;
+                var parser = XmlParser.Parse(
+                    _textView.TextSnapshot.GetText().AsMemory(),
+                    0,
+                    pos.Position);
+                return parser.State == XmlParser.ParserState.AttributeValue;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 该属性值是否应由 Avalonia 自动弹出补全（枚举/Hints 等）。
+        /// RowDefinitions 等自由文本返回 false，交给 Copilot。
+        /// </summary>
+        private bool ShouldAutoCompleteAttributeValue(XmlParser parser)
+        {
+            if (parser?.AttributeName == null || parser.TagName == null)
+            {
+                return false;
+            }
+
+            if (parser.AttributeName.Equals("Classes", StringComparison.Ordinal)
+                || parser.AttributeName.Equals("Selector", StringComparison.Ordinal)
+                || parser.AttributeName.Equals("xmlns", StringComparison.Ordinal)
+                || parser.AttributeName.Contains("xmlns:"))
+            {
+                return true;
+            }
+
+            MetadataProperty prop = null;
+            if (parser.AttributeName.Contains('.'))
+            {
+                var split = parser.AttributeName.Split('.');
+                if (split.Length == 2)
+                {
+                    prop = _engine.Helper.LookupProperty(split[0], split[1]);
+                }
+            }
+            else
+            {
+                prop = _engine.Helper.LookupProperty(parser.TagName, parser.AttributeName);
+            }
+
+            if (prop?.Type?.HasHintValues == true)
+            {
+                return true;
+            }
+
+            if (prop?.Type?.Name == typeof(Type).FullName)
+            {
+                return true;
+            }
+
+            var type = _engine.Helper.LookupType(parser.TagName);
+            if (type?.Events?.Any(e => e.Name == parser.AttributeName) == true)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 尝试接受 Copilot/IntelliCode 内联幽灵文本（Edit.AcceptSuggestion）。
+        /// </summary>
+        private bool TryAcceptInlineSuggestion()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                var beforeVersion = _textView.TextSnapshot.Version.VersionNumber;
+                var beforePos = _textView.Caret.Position.BufferPosition.Position;
+
+                var dte = Package.GetGlobalService(typeof(DTE)) as DTE2;
+                if (dte == null)
+                {
+                    return false;
+                }
+
+                dte.ExecuteCommand("Edit.AcceptSuggestion");
+
+                var afterVersion = _textView.TextSnapshot.Version.VersionNumber;
+                var afterPos = _textView.Caret.Position.BufferPosition.Position;
+                // 文本或光标变化说明建议已被接受
+                return afterVersion != beforeVersion || afterPos != beforePos;
+            }
+            catch (Exception)
+            {
+                // 命令不可用、无内联建议，或内部触及已释放会话
+                return false;
             }
         }
 
