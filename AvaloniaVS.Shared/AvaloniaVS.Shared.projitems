@@ -25,6 +25,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlErrorTableEntry.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlErrorTagger.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlErrorTaggerProvider.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlGoToDefinitionCommandHandler.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlGoToDefinitionService.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlNavigableSymbolSource.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)intellisense\XamlPasteCommandHandler.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlTextManipulatorRegistrar.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlTextViewCreationListener.cs" />

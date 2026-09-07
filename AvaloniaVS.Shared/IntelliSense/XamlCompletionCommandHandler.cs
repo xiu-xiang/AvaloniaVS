@@ -135,6 +135,13 @@ namespace AvaloniaVS.IntelliSense
             // If the pressed key is a key that can start a completion session.
             if (CompletionEngine.ShouldTriggerCompletionListOn(c) || c == '\a')
             {
+                // '.' 后应从类型列表切到静态成员列表；仅 Filter 旧会话无法换源
+                if (c == '.' && IsSessionAlive(_session))
+                {
+                    SafeDismiss(_session);
+                    _session = null;
+                }
+
                 if (!IsSessionAlive(_session))
                 {
                     if (TriggerCompletion() && c != '<' && c != '.' && c != ' ' && c != '[' && c != '(' && c != '|' && c != '#' && c != '/')
@@ -889,6 +896,8 @@ namespace AvaloniaVS.IntelliSense
             try
             {
                 session.Filter();
+                // 按当前 ApplicableTo 文本选中最佳匹配（如输入 S 高亮 Sandiantu）
+                session.SelectedCompletionSet?.SelectBestMatch();
             }
             catch (ObjectDisposedException)
             {
@@ -1133,6 +1142,17 @@ namespace AvaloniaVS.IntelliSense
                     var codeBehindClass = root.DescendantNodes()
                         .FirstOrDefault(x => x.IsKind(SyntaxKind.ClassDeclaration)) as ClassDeclarationSyntax;
 
+                    // 若 code-behind 已有同名方法，直接跳转，不再重复生成
+                    var existingMethod = codeBehindClass?.DescendantNodes()
+                        .OfType<MethodDeclarationSyntax>()
+                        .FirstOrDefault(m => m.Identifier.Text == generatedMethodName);
+                    if (existingMethod != null)
+                    {
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        NavigateToGeneratedEventHandler(dte, currentDocumentCodeBehind.FilePath, root, generatedMethodName);
+                        return;
+                    }
+
                     await TaskScheduler.Default;
 
                     var currentEvent = GetAllEvents(compilation.References.Select(compilation.GetAssemblyOrModuleSymbol)
@@ -1189,6 +1209,7 @@ namespace AvaloniaVS.IntelliSense
                         methodToInsert = methodToInsert.WithIdentifier(SyntaxFactory.Identifier(generatedMethodName + $"_{duplicatingMethodIds.Max() + 1}"));
                     }
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    var finalMethodName = methodToInsert.Identifier.Text;
                     var newMethodDeclaration = codeBehindClass.AddMembers(methodToInsert);
                     var newRoot = root.ReplaceNode(codeBehindClass, newMethodDeclaration);
                     newRoot = Formatter.Format(newRoot, Formatter.Annotation, workspace);
@@ -1203,6 +1224,9 @@ namespace AvaloniaVS.IntelliSense
                         editPoint.MoveToAbsoluteOffset(textDocument.Selection.ActivePoint.AbsoluteCharOffset);
                         editPoint.Insert($"_{duplicatingMethodIds.Max() + 1}");
                     }
+
+                    // 生成后跳转到 code-behind 中的事件处理方法
+                    NavigateToGeneratedEventHandler(dte, currentDocumentCodeBehind.FilePath, newRoot, finalMethodName);
                 }
             }
             finally
@@ -1211,6 +1235,51 @@ namespace AvaloniaVS.IntelliSense
                 {
                     await currentScheduler;
                 }
+            }
+        }
+
+        /// <summary>
+        /// 打开 code-behind 并将光标移到新生成的事件处理方法上。
+        /// </summary>
+        private static void NavigateToGeneratedEventHandler(
+            DTE2 dte,
+            string filePath,
+            SyntaxNode newRoot,
+            string methodName)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (dte == null || string.IsNullOrEmpty(filePath) || newRoot == null || string.IsNullOrEmpty(methodName))
+            {
+                return;
+            }
+
+            try
+            {
+                var method = newRoot.DescendantNodes()
+                    .OfType<MethodDeclarationSyntax>()
+                    .LastOrDefault(m => m.Identifier.Text == methodName);
+                if (method == null)
+                {
+                    return;
+                }
+
+                var lineSpan = method.Identifier.GetLocation().GetLineSpan();
+                var window = dte.ItemOperations.OpenFile(filePath);
+                window?.Activate();
+
+                if (dte.ActiveDocument?.Selection is TextSelection selection)
+                {
+                    // DTE 行号从 1 开始
+                    selection.MoveToLineAndOffset(
+                        lineSpan.StartLinePosition.Line + 1,
+                        Math.Max(1, lineSpan.StartLinePosition.Character + 1),
+                        false);
+                }
+            }
+            catch
+            {
+                // 导航失败不影响方法生成本身
             }
         }
 

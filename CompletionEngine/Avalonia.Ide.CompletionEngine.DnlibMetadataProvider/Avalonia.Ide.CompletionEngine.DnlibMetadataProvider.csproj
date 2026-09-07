@@ -2,10 +2,9 @@
 
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0;net6.0</TargetFrameworks>
-  </PropertyGroup>
-  <PropertyGroup Condition="Exists('$(SolutionDir)Key.snk')">
+    <!-- 不依赖 SolutionDir：IDE 单独生成 VS2026 时 SolutionDir 为空会导致未强签 → CreatePkgDef 失败 -->
     <SignAssembly>true</SignAssembly>
-    <AssemblyOriginatorKeyFile>$(SolutionDir)Key.snk</AssemblyOriginatorKeyFile>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)..\..\Key.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="dnlib" Version="3.6.0" />

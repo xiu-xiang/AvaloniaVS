@@ -1106,19 +1106,27 @@ public class CompletionEngine
                 {
                     if (t.SupportCtorArgument != MetadataTypeCtorArgument.Type)
                     {
-                        var split = attribName.Split('.');
+                        var split = attribName.Split(new[] { '.' }, 2);
                         var type = split[0];
-                        var prop = split[1];
+                        var prop = split.Length > 1 ? split[1] : "";
 
                         var mType = Helper.LookupType(type);
                         if (mType != null && t.SupportCtorArgument == MetadataTypeCtorArgument.HintValues)
                         {
                             var hints = FilterHintValues(mType, prop, currentAssemblyName, state);
-                            completions.AddRange(hints.Select(x => new Completion(x, $"{type}.{x}", x, GetCompletionKindForHintValues(mType))));
+                            // Display/Insert 均为成员短名；ApplicableTo 仅覆盖 '.' 后，便于按字母过滤
+                            completions.AddRange(hints.Select(x => new Completion(x, x, x, GetCompletionKindForHintValues(mType))));
                         }
 
                         var props = Helper.FilterPropertyNames(type, prop, attached: false, hasSetter: false, staticGetter: true);
-                        completions.AddRange(props.Select(x => new Completion(x, $"{type}.{x}", x, CompletionKind.StaticProperty)));
+                        completions.AddRange(props.Select(x => new Completion(x, x, x, CompletionKind.StaticProperty)));
+
+                        // 过滤/替换范围从最后一个 '.' 之后开始（输入字母即可缩小列表）
+                        var lastDot = attribName.LastIndexOf('.');
+                        if (lastDot >= 0)
+                        {
+                            forcedStart = ext.CurrentValueStart + lastDot + 1;
+                        }
                     }
                 }
                 else
