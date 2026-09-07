@@ -8,5 +8,14 @@ namespace AvaloniaDemo.Views
         {
             InitializeComponent();
         }
+
+        private void Button_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            var viewModel = this.DataContext as ViewModels.MainViewModel;
+            if (viewModel != null)
+            {
+                viewModel.Greeting = "Button Clicked!";
+            }
+        }
     }
 }

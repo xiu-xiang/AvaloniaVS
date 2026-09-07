@@ -3,7 +3,7 @@
   <Metadata>
         <Identity Id="AxamlTPreviewer" Version="21.10.1" Language="en-US" Publisher="kongdetuo" />
         <DisplayName>AxamlTPreviewer for Visual Studio 2022</DisplayName>
-        <Description xml:space="preserve">Previewer for Avalonia applications and libraries (Visual Studio 2022).</Description>
+        <Description xml:space="preserve">面向 Visual Studio 2022 的 Avalonia/AXAML 增强扩展（基于开源 AvaloniaVS 的 MIT 衍生版，非官方产品）。提供实时预览、智能补全、样式类补全、转到定义、已废弃成员提示，以及 Avalonia 12.1 相关模板支持。</Description>
     <Icon>icon.ico</Icon>
   </Metadata>
   <Installation>

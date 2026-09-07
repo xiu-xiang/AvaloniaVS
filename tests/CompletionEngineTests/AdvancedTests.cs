@@ -34,19 +34,20 @@ namespace CompletionEngineTests
         [Fact]
         public void Enum_Value_in_StaticExtension_Should_Be_Completed()
         {
-            AssertSingleCompletion("<UserControl HorizontalAlignment=\"{x:Static ", "HorizontalAlignment.L", "HorizontalAlignment.Left");
+            // ApplicableTo 从 '.' 后开始，插入短成员名
+            AssertSingleCompletion("<UserControl HorizontalAlignment=\"{x:Static HorizontalAlignment.", "L", "Left");
         }
 
         [Fact]
         public void Extension_With_CtorArgument_Static_Properties_Values_Should_Be_Completed()
         {
-            AssertSingleCompletion("<UserControl Background=\"{x:Static ", "Brushes.Re", "Brushes.Red");
+            AssertSingleCompletion("<UserControl Background=\"{x:Static Brushes.", "Re", "Red");
         }
 
         [Fact]
         public void Extension_With_CtorArgument_Static_Field_Values_Should_Be_Completed()
         {
-            AssertSingleCompletion("<UserControl IsEnabled=\"{Binding Converter={x:Static ", "ObjectConverters.IsN", "ObjectConverters.IsNull");
+            AssertSingleCompletion("<UserControl IsEnabled=\"{Binding Converter={x:Static ObjectConverters.", "IsN", "IsNull");
         }
 
         [Fact]

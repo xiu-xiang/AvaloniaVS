@@ -15,11 +15,12 @@
         <vm:MainViewModel />
     </Design.DataContext>
 
-  <Grid  RowDefinitions="auto,*">
-    <TextBlock Text="Hello, Avalonia!" Grid.Row="" >
+  <Grid   RowDefinitions="auto,*" Background="AliceBlue">
+    <TextBlock Text="Hello, Avalonia!" Foreground="BurlyWood"  Grid.Row="0" Background="AliceBlue" TextAlignment="Center">
         
     </TextBlock>
-    
+     <Button Background="Red"   Content="{Binding Greeting}" Grid.Row="1"/>
+  <TextBox Watermark="Enter your text here..."/>
   </Grid>
 
 </Window>

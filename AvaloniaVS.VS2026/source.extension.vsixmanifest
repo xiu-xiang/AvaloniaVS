@@ -4,7 +4,7 @@
         <!-- VS2026 专用扩展 Identity，可与 VS2022 包并存 -->
         <Identity Id="AxamlTPreviewer.VS2026" Version="21.10.1" Language="en-US" Publisher="kongdetuo" />
         <DisplayName>AxamlTPreviewer for Visual Studio 2026</DisplayName>
-        <Description xml:space="preserve">Previewer and Avalonia item templates (Window, UserControl, ResourceDictionary, Styles, etc.) for Visual Studio 2026.</Description>
+        <Description xml:space="preserve">面向 Visual Studio 2026 的 Avalonia/AXAML 增强扩展（基于开源 AvaloniaVS 的 MIT 衍生版，非官方产品）。提供实时预览、智能补全、样式类补全、转到定义、已废弃成员提示，以及 Avalonia 12.1 项目/项模板（Window、UserControl、资源字典、Styles 等）。</Description>
     <Icon>icon.ico</Icon>
   </Metadata>
   <Installation>

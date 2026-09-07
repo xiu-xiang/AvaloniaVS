@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.9.12120.119 stable
+VisualStudioVersion = 18.9.12120.119
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "templates", "templates", "{FC634911-168A-4FDD-8758-11FAD5B8696B}"
 EndProject
@@ -48,6 +48,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvaloniaStylesTemplate", "templates\AvaloniaStylesTemplate\AvaloniaStylesTemplate.csproj", "{9FEF480A-5A56-489D-AD89-53970FD2B2A1}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvaloniaDemo", "AvaloniaDemo\AvaloniaDemo.csproj", "{467B6B63-7CE6-40B1-AC04-CE4310A5B159}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WpfApp1", "WpfApp1\WpfApp1.csproj", "{A7050AD5-D6E5-428F-A361-C871A72EEAB1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -227,6 +229,18 @@ Global
 		{467B6B63-7CE6-40B1-AC04-CE4310A5B159}.Release|arm64.Build.0 = Release|Any CPU
 		{467B6B63-7CE6-40B1-AC04-CE4310A5B159}.Release|x86.ActiveCfg = Release|Any CPU
 		{467B6B63-7CE6-40B1-AC04-CE4310A5B159}.Release|x86.Build.0 = Release|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Debug|arm64.ActiveCfg = Debug|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Debug|arm64.Build.0 = Debug|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Debug|x86.Build.0 = Debug|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Release|arm64.ActiveCfg = Release|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Release|arm64.Build.0 = Release|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Release|x86.ActiveCfg = Release|Any CPU
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -244,6 +258,7 @@ Global
 		{F7EE3A1D-DDB2-4F82-A6E7-F444A24ABB62} = {FC634911-168A-4FDD-8758-11FAD5B8696B}
 		{9FEF480A-5A56-489D-AD89-53970FD2B2A1} = {FC634911-168A-4FDD-8758-11FAD5B8696B}
 		{467B6B63-7CE6-40B1-AC04-CE4310A5B159} = {3CF4E8CC-E706-41DC-8A22-8E37EDA7E599}
+		{A7050AD5-D6E5-428F-A361-C871A72EEAB1} = {3CF4E8CC-E706-41DC-8A22-8E37EDA7E599}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {0CE7163D-D505-4965-B2B9-9E9068C77A62}

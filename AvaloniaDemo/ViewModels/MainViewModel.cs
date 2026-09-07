@@ -11,5 +11,9 @@ namespace AvaloniaDemo.ViewModels
             get => _greeting;
             set => this.RaiseAndSetIfChanged(ref _greeting, value);
         }
+        public MainViewModel()
+        {
+
+        }
     }
 }
