@@ -108,6 +108,24 @@ public enum MetadataTypeCtorArgument
 }
 
 [DebuggerDisplay("{Name} from {DeclaringType}")]
-public record MetadataProperty(string Name, MetadataType? Type, MetadataType? DeclaringType, bool IsAttached, bool IsStatic, bool HasGetter, bool HasSetter, string? TypeFullName = null);
+public record MetadataProperty(
+    string Name,
+    MetadataType? Type,
+    MetadataType? DeclaringType,
+    bool IsAttached,
+    bool IsStatic,
+    bool HasGetter,
+    bool HasSetter,
+    string? TypeFullName = null,
+    bool IsObsolete = false,
+    string? ObsoleteMessage = null,
+    bool ObsoleteIsError = false);
 
-public record MetadataEvent(string Name, MetadataType? Type, MetadataType? DeclaringType, bool IsAttached);
+public record MetadataEvent(
+    string Name,
+    MetadataType? Type,
+    MetadataType? DeclaringType,
+    bool IsAttached,
+    bool IsObsolete = false,
+    string? ObsoleteMessage = null,
+    bool ObsoleteIsError = false);

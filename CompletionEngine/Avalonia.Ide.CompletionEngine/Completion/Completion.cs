@@ -63,4 +63,37 @@ public record Completion(string DisplayText,
     }
 
     public bool TriggerCompletionAfterInsert { get; init; }
+
+    /// <summary>补全项对应成员是否已废弃（[Obsolete]）。</summary>
+    public bool IsObsolete { get; init; }
+}
+
+/// <summary>
+/// AXAML 文档中已废弃成员属性名的文本范围与提示信息。
+/// </summary>
+public sealed class ObsoleteMemberSpan
+{
+    public ObsoleteMemberSpan(int start, int length, string memberDisplayName, string? obsoleteMessage, bool isError)
+    {
+        Start = start;
+        Length = length;
+        MemberDisplayName = memberDisplayName;
+        ObsoleteMessage = obsoleteMessage;
+        IsError = isError;
+    }
+
+    public int Start { get; }
+    public int Length { get; }
+    public string MemberDisplayName { get; }
+    public string? ObsoleteMessage { get; }
+    public bool IsError { get; }
+
+    /// <summary>悬停提示文案，风格接近 CS0618。</summary>
+    public string GetTooltipText()
+    {
+        if (string.IsNullOrWhiteSpace(ObsoleteMessage))
+            return $"[弃用的] \"{MemberDisplayName}\" 已过时。";
+
+        return $"[弃用的] \"{MemberDisplayName}\" 已过时: \"{ObsoleteMessage}\"";
+    }
 }

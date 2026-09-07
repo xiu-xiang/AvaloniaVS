@@ -31,7 +31,15 @@ namespace AvaloniaVS.IntelliSense
             TriggerCompletion = completion.TriggerCompletionAfterInsert;
             Kind = completion.Kind;
             DeleteTextOffset = completion.DeleteTextOffset;
-            if (completion.Priority < 255)
+            // 已废弃成员显示弃用角标；否则 Priority < 255 表示受保护成员角标
+            if (completion.IsObsolete)
+            {
+                this.AttributeIcons = new Microsoft.VisualStudio.Language.Intellisense.CompletionIcon2[]
+                {
+                    new (KnownMonikers.OverlayWarning, "Obsolete", ""),
+                };
+            }
+            else if (completion.Priority < 255)
             {
                 this.AttributeIcons = new Microsoft.VisualStudio.Language.Intellisense.CompletionIcon2[]
                 {

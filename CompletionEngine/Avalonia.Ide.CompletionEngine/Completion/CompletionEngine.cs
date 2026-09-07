@@ -12,6 +12,67 @@ public class CompletionEngine
 {
     private record struct ElementCompletionInfo(string DisplayText, string InsertText, string? Suffix, int? RecommendedCursorOffset, bool TriggerCompletionAfterInsert);
 
+    /// <summary>
+    /// 为属性补全项附加 [Obsolete] 后缀与说明。
+    /// </summary>
+    private static Completion CreatePropertyCompletion(
+        MetadataProperty property,
+        string insertText,
+        CompletionKind kind,
+        int? recommendedCursorOffset = null,
+        byte priority = 255)
+        => CreateObsoleteAwareCompletion(
+            property.Name,
+            insertText,
+            kind,
+            recommendedCursorOffset,
+            property.IsObsolete,
+            property.ObsoleteMessage,
+            priority);
+
+    /// <summary>
+    /// 为事件补全项附加 [Obsolete] 后缀与说明。
+    /// </summary>
+    private static Completion CreateEventCompletion(
+        MetadataEvent evt,
+        string insertText,
+        CompletionKind kind,
+        int? recommendedCursorOffset = null,
+        byte priority = 255)
+        => CreateObsoleteAwareCompletion(
+            evt.Name,
+            insertText,
+            kind,
+            recommendedCursorOffset,
+            evt.IsObsolete,
+            evt.ObsoleteMessage,
+            priority);
+
+    private static Completion CreateObsoleteAwareCompletion(
+        string displayText,
+        string insertText,
+        CompletionKind kind,
+        int? recommendedCursorOffset,
+        bool isObsolete,
+        string? obsoleteMessage,
+        byte priority)
+    {
+        var description = displayText;
+        string? suffix = null;
+        if (isObsolete)
+        {
+            suffix = "已废弃";
+            description = string.IsNullOrWhiteSpace(obsoleteMessage)
+                ? $"{displayText}\n已废弃"
+                : $"{displayText}\n已废弃: {obsoleteMessage}";
+        }
+
+        return new Completion(displayText, insertText, description, kind, recommendedCursorOffset, suffix, Priority: priority)
+        {
+            IsObsolete = isObsolete
+        };
+    }
+
     public class MetadataHelper
     {
         private Metadata? _metadata;
@@ -120,8 +181,16 @@ public class CompletionEngine
             bool hasSetter,
             bool staticGetter = false)
         {
+            return FilterProperty(typeName, propName, attached, hasSetter, staticGetter).Select(p => p.Name);
+        }
+
+        public IEnumerable<MetadataProperty> FilterProperty(string typeName, string? propName,
+            bool? attached,
+            bool hasSetter,
+            bool staticGetter = false)
+        {
             var t = LookupType(typeName);
-            return MetadataHelper.FilterPropertyNames(t, propName, attached, hasSetter, staticGetter);
+            return MetadataHelper.FilterProperty(t, propName, attached, hasSetter, staticGetter);
         }
 
         public static IEnumerable<string> FilterPropertyNames(MetadataType? t,
@@ -158,13 +227,17 @@ public class CompletionEngine
 
         public IEnumerable<string> FilterEventNames(string typeName, string? propName,
             bool attached)
+            => FilterEvents(typeName, propName, attached).Select(n => n.Name);
+
+        public IEnumerable<MetadataEvent> FilterEvents(string typeName, string? propName,
+            bool attached)
         {
             var t = LookupType(typeName);
             propName ??= "";
             if (t == null)
-                return Array.Empty<string>();
+                return Array.Empty<MetadataEvent>();
 
-            return t.Events.Where(n => n.IsAttached == attached && n.Name.StartsWith(propName, StringComparison.OrdinalIgnoreCase)).Select(n => n.Name);
+            return t.Events.Where(n => n.IsAttached == attached && n.Name.StartsWith(propName, StringComparison.OrdinalIgnoreCase));
         }
 
         public MetadataProperty? LookupProperty(string? typeName, string? propName)
@@ -257,8 +330,8 @@ public class CompletionEngine
 
                 var sameType = state.GetParentTagName(1) == typeName;
 
-                completions.AddRange(Helper.FilterPropertyNames(typeName, compName, attached: sameType ? (bool?)null : true, hasSetter: false)
-                    .Select(p => new Completion(p, sameType ? CompletionKind.Property : CompletionKind.AttachedProperty)));
+                completions.AddRange(Helper.FilterProperty(typeName, compName, attached: sameType ? (bool?)null : true, hasSetter: false)
+                    .Select(p => CreatePropertyCompletion(p, p.Name, sameType ? CompletionKind.Property : CompletionKind.AttachedProperty)));
             }
             else
             {
@@ -346,17 +419,17 @@ public class CompletionEngine
                 }
                 else
                 {
-                    completions.AddRange(Helper.FilterPropertyNames(split[0], split[1], attached: true, hasSetter: true)
-                        .Select(x => new Completion(x, x + attributeSuffix, x, CompletionKind.AttachedProperty, x.Length + attributeOffset)));
+                    completions.AddRange(Helper.FilterProperty(split[0], split[1], attached: true, hasSetter: true)
+                        .Select(x => CreatePropertyCompletion(x, x.Name + attributeSuffix, CompletionKind.AttachedProperty, x.Name.Length + attributeOffset)));
 
-                    completions.AddRange(Helper.FilterEventNames(split[0], split[1], attached: true)
-                        .Select(v => new Completion(v, v + attributeSuffix, v, CompletionKind.AttachedEvent, v.Length + attributeOffset)));
+                    completions.AddRange(Helper.FilterEvents(split[0], split[1], attached: true)
+                        .Select(v => CreateEventCompletion(v, v.Name + attributeSuffix, CompletionKind.AttachedEvent, v.Name.Length + attributeOffset)));
                 }
             }
             else if (state.TagName is not null)
             {
-                completions.AddRange(Helper.FilterPropertyNames(state.TagName, attributeName, attached: false, hasSetter: true)
-                    .Select(x => new Completion(x, x + attributeSuffix, x, CompletionKind.Property, x.Length + attributeOffset)));
+                completions.AddRange(Helper.FilterProperty(state.TagName, attributeName, attached: false, hasSetter: true)
+                    .Select(x => CreatePropertyCompletion(x, x.Name + attributeSuffix, CompletionKind.Property, x.Name.Length + attributeOffset)));
 
                 // Special case for "<On " here, 'Options' property is get only list property
                 // which is skipped above - Add it back here
@@ -369,8 +442,8 @@ public class CompletionEngine
                         CompletionKind.Property, 9 /*recommendedCursorOffset*/));
                 }
 
-                completions.AddRange(Helper.FilterEventNames(state.TagName, attributeName, attached: false)
-                    .Select(v => new Completion(v, v + attributeSuffix, v, CompletionKind.Event, v.Length + attributeOffset)));
+                completions.AddRange(Helper.FilterEvents(state.TagName, attributeName, attached: false)
+                    .Select(v => CreateEventCompletion(v, v.Name + attributeSuffix, CompletionKind.Event, v.Name.Length + attributeOffset)));
 
                 var targetType = Helper.LookupType(state.TagName);
                 if (targetType is not null)
@@ -605,11 +678,13 @@ public class CompletionEngine
 
     private static List<Completion> SortCompletions(List<Completion> completions)
     {
-        // Group the completions based on Kind, and sort the completions for each group
+        // 按 Kind 分组；同组内未废弃优先，再按 Priority / 显示名排序
         return completions
             .GroupBy(i => i.Kind, (kind, compl) =>
                 (Kind: kind, Completions: compl
-                .OrderBy(j => j.Priority).ThenBy(j => j.DisplayText)))
+                .OrderBy(j => j.IsObsolete)
+                .ThenBy(j => j.Priority)
+                .ThenBy(j => j.DisplayText)))
             .OrderBy(i => GetCompletionPriority(i.Kind))
             .SelectMany(i => i.Completions)
             .ToList();
@@ -832,13 +907,13 @@ public class CompletionEngine
 
                 var sameType = state.GetParentTagName(1) == typeName;
 
-                completions.AddRange(Helper.FilterPropertyNames(typeName, compName, attached: true, hasSetter: true)
-                                .Select(p => new Completion(p, p, p, CompletionKind.AttachedProperty)));
+                completions.AddRange(Helper.FilterProperty(typeName, compName, attached: true, hasSetter: true)
+                                .Select(p => CreatePropertyCompletion(p, p.Name, CompletionKind.AttachedProperty)));
             }
             else
             {
-                completions.AddRange(Helper.FilterPropertyNames(selectorTypeName, value, attached: false, hasSetter: true)
-                        .Select(x => new Completion(x, CompletionKind.Property)));
+                completions.AddRange(Helper.FilterProperty(selectorTypeName, value, attached: false, hasSetter: true)
+                        .Select(x => CreatePropertyCompletion(x, x.Name, CompletionKind.Property)));
 
                 completions.AddRange(Helper.FilterTypeNames(value, withAttachedPropertiesOrEventsOnly: true).Select(x => new Completion(x, CompletionKind.Class)));
             }
@@ -904,9 +979,13 @@ public class CompletionEngine
         {
             if (filterType != null)
             {
-                foreach (var propertyName in MetadataHelper.FilterPropertyNames(filterType, filter, false, false))
+                foreach (var property in MetadataHelper.FilterProperty(filterType, filter, false, false))
                 {
-                    yield return new Completion(propertyName, fmtInsertText?.Invoke(propertyName) ?? propertyName, propertyName, CompletionKind.DataProperty, Priority: 254);
+                    yield return CreatePropertyCompletion(
+                        property,
+                        fmtInsertText?.Invoke(property.Name) ?? property.Name,
+                        CompletionKind.DataProperty,
+                        priority: 254);
                 }
             }
         }
@@ -1085,8 +1164,8 @@ public class CompletionEngine
                 return forcedStart ?? ext.CurrentValueStart;
             }
 
-            completions.AddRange(Helper.FilterPropertyNames(transformedName, ext.AttributeName ?? "", attached: false, hasSetter: true)
-                .Select(x => new Completion(x, x + "=", x, CompletionKind.Property)));
+            completions.AddRange(Helper.FilterProperty(transformedName, ext.AttributeName ?? "", attached: false, hasSetter: true)
+                .Select(x => CreatePropertyCompletion(x, x.Name + "=", CompletionKind.Property)));
 
             var attribName = ext.AttributeName ?? "";
             var t = Helper.LookupType(transformedName);
@@ -1118,8 +1197,8 @@ public class CompletionEngine
                             completions.AddRange(hints.Select(x => new Completion(x, x, x, GetCompletionKindForHintValues(mType))));
                         }
 
-                        var props = Helper.FilterPropertyNames(type, prop, attached: false, hasSetter: false, staticGetter: true);
-                        completions.AddRange(props.Select(x => new Completion(x, x, x, CompletionKind.StaticProperty)));
+                        var props = Helper.FilterProperty(type, prop, attached: false, hasSetter: false, staticGetter: true);
+                        completions.AddRange(props.Select(x => CreatePropertyCompletion(x, x.Name, CompletionKind.StaticProperty)));
 
                         // 过滤/替换范围从最后一个 '.' 之后开始（输入字母即可缩小列表）
                         var lastDot = attribName.LastIndexOf('.');
@@ -1572,5 +1651,124 @@ public class CompletionEngine
             source = trasformation.Apply(source);
         }
         return string.Concat(source);
+    }
+
+    /// <summary>
+    /// 扫描 AXAML 文本中所有已声明且标记 [Obsolete] 的属性/事件名。
+    /// </summary>
+    public IReadOnlyList<ObsoleteMemberSpan> FindObsoleteMembers(Metadata metadata, string text, string? currentAssemblyName = null)
+    {
+        if (metadata is null || string.IsNullOrEmpty(text))
+            return Array.Empty<ObsoleteMemberSpan>();
+
+        Helper.SetMetadata(metadata, text, currentAssemblyName);
+
+        var results = new List<ObsoleteMemberSpan>();
+        var parser = new XmlParser(text.AsMemory());
+        var previous = XmlParser.ParserState.None;
+
+        while (parser.TryAdvance())
+        {
+            // 属性名刚解析完成（进入 = 之前）时记录范围
+            if (parser.State == XmlParser.ParserState.BeforeAttributeValue
+                && previous == XmlParser.ParserState.StartAttribute
+                && parser.AttributeNameStart is int nameStart
+                && parser.AttributeNameEnd is int nameEnd
+                && nameEnd >= nameStart)
+            {
+                var attributeName = parser.AttributeName;
+                var tagName = parser.ParseCurrentTagName();
+                if (TryResolveObsoleteAttribute(tagName, attributeName, out var displayName, out var message, out var isError))
+                {
+                    results.Add(new ObsoleteMemberSpan(
+                        nameStart,
+                        nameEnd - nameStart + 1,
+                        displayName,
+                        message,
+                        isError));
+                }
+            }
+
+            previous = parser.State;
+        }
+
+        return results;
+    }
+
+    private bool TryResolveObsoleteAttribute(
+        string? tagName,
+        string? attributeName,
+        out string displayName,
+        out string? obsoleteMessage,
+        out bool isError)
+    {
+        displayName = string.Empty;
+        obsoleteMessage = null;
+        isError = false;
+
+        if (string.IsNullOrEmpty(attributeName))
+            return false;
+
+        // 跳过命名空间与常见 XML 指令前缀
+        if (attributeName.StartsWith("xmlns", StringComparison.OrdinalIgnoreCase)
+            || attributeName.StartsWith("xml:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (attributeName.Contains('.'))
+        {
+            var parts = attributeName.Split(new[] { '.' }, 2);
+            if (parts.Length != 2)
+                return false;
+
+            var prop = Helper.LookupProperty(parts[0], parts[1]);
+            if (prop?.IsObsolete == true)
+            {
+                displayName = $"{parts[0]}.{parts[1]}";
+                obsoleteMessage = prop.ObsoleteMessage;
+                isError = prop.ObsoleteIsError;
+                return true;
+            }
+
+            var owner = Helper.LookupType(parts[0]);
+            var attachedEvent = owner?.Events?.FirstOrDefault(e => e.IsAttached && e.Name == parts[1]);
+            if (attachedEvent?.IsObsolete == true)
+            {
+                displayName = $"{parts[0]}.{parts[1]}";
+                obsoleteMessage = attachedEvent.ObsoleteMessage;
+                isError = attachedEvent.ObsoleteIsError;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(tagName))
+            return false;
+
+        var typeName = tagName!;
+        var property = Helper.LookupProperty(typeName, attributeName);
+        if (property?.IsObsolete == true)
+        {
+            var shortType = typeName.Contains(':') ? typeName.Substring(typeName.IndexOf(':') + 1) : typeName;
+            displayName = $"{shortType}.{attributeName}";
+            obsoleteMessage = property.ObsoleteMessage;
+            isError = property.ObsoleteIsError;
+            return true;
+        }
+
+        var type = Helper.LookupType(typeName);
+        var evt = type?.Events?.FirstOrDefault(e => !e.IsAttached && e.Name == attributeName);
+        if (evt?.IsObsolete == true)
+        {
+            var shortType = typeName.Contains(':') ? typeName.Substring(typeName.IndexOf(':') + 1) : typeName;
+            displayName = $"{shortType}.{attributeName}";
+            obsoleteMessage = evt.ObsoleteMessage;
+            isError = evt.ObsoleteIsError;
+            return true;
+        }
+
+        return false;
     }
 }

@@ -79,4 +79,44 @@ internal static class DnlibExtension
                  .ToArray();
         return result!;
     }
+
+    /// <summary>
+    /// 从自定义特性中解析 <see cref="System.ObsoleteAttribute"/>。
+    /// </summary>
+    public static (bool IsObsolete, string? Message, bool IsError) GetObsoleteInfo(this IHasCustomAttribute? provider)
+    {
+        if (provider?.HasCustomAttributes != true)
+            return default;
+
+        foreach (var attr in provider.CustomAttributes)
+        {
+            var typeName = attr.TypeFullName;
+            if (typeName != "System.ObsoleteAttribute"
+                && !typeName.EndsWith(".ObsoleteAttribute", System.StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string? message = null;
+            var isError = false;
+
+            if (attr.ConstructorArguments.Count > 0)
+                message = attr.ConstructorArguments[0].Value as string;
+            if (attr.ConstructorArguments.Count > 1 && attr.ConstructorArguments[1].Value is bool errorArg)
+                isError = errorArg;
+
+            foreach (var named in attr.NamedArguments)
+            {
+                var namedValue = named.Argument.Value;
+                if (named.Name == "Message" && namedValue is string namedMessage)
+                    message = namedMessage;
+                else if (named.Name == "IsError" && namedValue is bool namedError)
+                    isError = namedError;
+            }
+
+            return (true, message, isError);
+        }
+
+        return default;
+    }
 }

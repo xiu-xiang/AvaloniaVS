@@ -56,6 +56,12 @@ public class XmlParser
 
     public int? ElementNameEnd => State >= ParserState.StartElement ? _elementNameEnd : null;
 
+    /// <summary>当前属性名起始位置（StartAttribute 及之后有效）。</summary>
+    public int? AttributeNameStart => State >= ParserState.StartAttribute ? _attributeNameStart : null;
+
+    /// <summary>当前属性名结束位置（含），在进入 BeforeAttributeValue 后可用。</summary>
+    public int? AttributeNameEnd => _attributeNameEnd;
+
     public int ContainingTagStart => _containingTagStart.Count > 0 ? _containingTagStart.Peek() : 0;
 
     public int NestingLevel => _containingTagStart.Count;
@@ -329,6 +335,9 @@ public class XmlParser
 
         return rv;
     }
+
+    /// <summary>向前解析一个字符；文档结束时返回 false。</summary>
+    public bool TryAdvance() => ParseChar();
 
     /// <summary>
     /// Try parsing until closing tag is found

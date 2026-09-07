@@ -215,6 +215,16 @@ internal class PropertyWrapper : IPropertyInformation
             ? type.FullName
             : $"{type.FullName}, {type.DefinitionAssembly.Name}";
 
+        // 优先读属性上的 [Obsolete]，否则回退到 get/set 方法
+        var obsolete = prop.GetObsoleteInfo();
+        if (!obsolete.IsObsolete)
+            obsolete = getMethod.GetObsoleteInfo();
+        if (!obsolete.IsObsolete)
+            obsolete = setMethod.GetObsoleteInfo();
+        IsObsolete = obsolete.IsObsolete;
+        ObsoleteMessage = obsolete.Message;
+        ObsoleteIsError = obsolete.IsError;
+
         _prop = prop;
         if (HasPublicGetter || HasPublicSetter)
         {
@@ -284,6 +294,9 @@ internal class PropertyWrapper : IPropertyInformation
     public string TypeFullName { get; }
     public string QualifiedTypeFullName { get; }
     public string Name { get; }
+    public bool IsObsolete { get; }
+    public string? ObsoleteMessage { get; }
+    public bool ObsoleteIsError { get; }
 
     public bool IsVisbleTo(IAssemblyInformation assembly) =>
         _isVisbleTo(_prop, assembly);
@@ -315,6 +328,11 @@ internal class FieldWrapper : IFieldInformation
         }
 
         IsRoutedEvent = isRoutedEvent;
+
+        var obsolete = f.GetObsoleteInfo();
+        IsObsolete = obsolete.IsObsolete;
+        ObsoleteMessage = obsolete.Message;
+        ObsoleteIsError = obsolete.IsError;
     }
 
     public bool IsRoutedEvent { get; }
@@ -327,6 +345,9 @@ internal class FieldWrapper : IFieldInformation
 
     public string ReturnTypeFullName { get; }
     public string QualifiedTypeFullName { get; }
+    public bool IsObsolete { get; }
+    public string? ObsoleteMessage { get; }
+    public bool ObsoleteIsError { get; }
 }
 
 internal class EventWrapper : IEventInformation
@@ -340,6 +361,16 @@ internal class EventWrapper : IEventInformation
             : $"{@event.EventType.FullName}, {@event.EventType.DefinitionAssembly.Name}";
         IsPublic = @event.IsPublic();
         IsInternal = @event.IsInternal();
+
+        // 事件本身或 add/remove 方法上的 [Obsolete]
+        var obsolete = @event.GetObsoleteInfo();
+        if (!obsolete.IsObsolete)
+            obsolete = @event.AddMethod.GetObsoleteInfo();
+        if (!obsolete.IsObsolete)
+            obsolete = @event.RemoveMethod.GetObsoleteInfo();
+        IsObsolete = obsolete.IsObsolete;
+        ObsoleteMessage = obsolete.Message;
+        ObsoleteIsError = obsolete.IsError;
     }
 
     public string Name { get; }
@@ -348,6 +379,9 @@ internal class EventWrapper : IEventInformation
     public string QualifiedTypeFullName { get; }
     public bool IsPublic { get; }
     public bool IsInternal { get; }
+    public bool IsObsolete { get; }
+    public string? ObsoleteMessage { get; }
+    public bool ObsoleteIsError { get; }
 }
 
 internal class MethodWrapper : IMethodInformation
@@ -373,6 +407,11 @@ internal class MethodWrapper : IMethodInformation
             QualifiedReturnTypeFullName = $"{typeof(void).FullName}, {typeof(void).Assembly.FullName}";
             ReturnTypeFullName = typeof(void).FullName!;
         }
+
+        var obsolete = method.GetObsoleteInfo();
+        IsObsolete = obsolete.IsObsolete;
+        ObsoleteMessage = obsolete.Message;
+        ObsoleteIsError = obsolete.IsError;
     }
 
     public bool IsStatic => _method.IsStatic;
@@ -381,6 +420,9 @@ internal class MethodWrapper : IMethodInformation
     public IList<IParameterInformation> Parameters => _parameters.Value;
     public string ReturnTypeFullName { get; }
     public string QualifiedReturnTypeFullName { get; }
+    public bool IsObsolete { get; }
+    public string? ObsoleteMessage { get; }
+    public bool ObsoleteIsError { get; }
 
     public override string ToString() => Name;
 }

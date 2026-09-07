@@ -69,6 +69,9 @@ public interface IMethodInformation
     IList<IParameterInformation> Parameters { get; }
     string ReturnTypeFullName { get; }
     string QualifiedReturnTypeFullName { get; }
+    bool IsObsolete { get; }
+    string? ObsoleteMessage { get; }
+    bool ObsoleteIsError { get; }
 }
 
 public interface IFieldInformation
@@ -79,6 +82,9 @@ public interface IFieldInformation
     string ReturnTypeFullName { get; }
     string QualifiedTypeFullName { get; }
     bool IsRoutedEvent { get; }
+    bool IsObsolete { get; }
+    string? ObsoleteMessage { get; }
+    bool ObsoleteIsError { get; }
 }
 
 public interface IParameterInformation
@@ -98,6 +104,12 @@ public interface IPropertyInformation
     string QualifiedTypeFullName { get; }
     string Name { get; }
     bool IsVisbleTo(IAssemblyInformation assembly);
+    /// <summary>成员是否标记了 <see cref="System.ObsoleteAttribute"/>。</summary>
+    bool IsObsolete { get; }
+    /// <summary>Obsolete 特性中的提示消息（如替代 API 说明）。</summary>
+    string? ObsoleteMessage { get; }
+    /// <summary>Obsolete 是否以编译错误形式报出。</summary>
+    bool ObsoleteIsError { get; }
 }
 
 public interface IEventInformation
@@ -107,4 +119,7 @@ public interface IEventInformation
     string QualifiedTypeFullName { get; }
     bool IsPublic { get; }
     bool IsInternal { get; }
+    bool IsObsolete { get; }
+    string? ObsoleteMessage { get; }
+    bool ObsoleteIsError { get; }
 }

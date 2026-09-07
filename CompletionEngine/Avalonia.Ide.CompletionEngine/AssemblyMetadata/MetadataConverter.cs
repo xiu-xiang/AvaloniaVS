@@ -267,7 +267,8 @@ public static class MetadataConverter
 
                     var p = new MetadataProperty(prop.Name, propertyType,
                         currentType, false, prop.IsStatic, prop.HasPublicGetter,
-                        hasSetter, prop.TypeFullName);
+                        hasSetter, prop.TypeFullName,
+                        prop.IsObsolete, prop.ObsoleteMessage, prop.ObsoleteIsError);
 
                     type.Properties.Add(p);
                 }
@@ -275,7 +276,8 @@ public static class MetadataConverter
                 foreach (var eventDef in typeDef.Events)
                 {
                     var e = new MetadataEvent(eventDef.Name, GetType(types, eventDef.TypeFullName, eventDef.QualifiedTypeFullName),
-                        types.GetValueOrDefault(typeDef.FullName, typeDef.AssemblyQualifiedName), false);
+                        types.GetValueOrDefault(typeDef.FullName, typeDef.AssemblyQualifiedName), false,
+                        eventDef.IsObsolete, eventDef.ObsoleteMessage, eventDef.ObsoleteIsError);
 
                     type.Events.Add(e);
                 }
@@ -297,7 +299,8 @@ public static class MetadataConverter
                                 type.Events.Add(new MetadataEvent(name,
                                     types.GetValueOrDefault(fieldDef.ReturnTypeFullName, fieldDef.QualifiedTypeFullName),
                                     types.GetValueOrDefault(typeDef.FullName, typeDef.AssemblyQualifiedName),
-                                    true));
+                                    true,
+                                    fieldDef.IsObsolete, fieldDef.ObsoleteMessage, fieldDef.ObsoleteIsError));
                             }
                             else if (fieldDef.Name.EndsWith("Property", StringComparison.OrdinalIgnoreCase)
                                 && fieldDef.ReturnTypeFullName.StartsWith("Avalonia.AttachedProperty`1")
@@ -331,18 +334,33 @@ public static class MetadataConverter
 
                                 if (getMethod is not null)
                                 {
+                                    // 附加属性：优先 Get/Set 方法上的 [Obsolete]，否则看 XxxProperty 字段
+                                    var isObsolete = getMethod.IsObsolete || (setMethod?.IsObsolete ?? false) || fieldDef.IsObsolete;
+                                    string? obsoleteMessage = getMethod.ObsoleteMessage
+                                        ?? setMethod?.ObsoleteMessage
+                                        ?? fieldDef.ObsoleteMessage;
+                                    var obsoleteIsError = getMethod.ObsoleteIsError
+                                        || (setMethod?.ObsoleteIsError ?? false)
+                                        || fieldDef.ObsoleteIsError;
+
                                     type.Properties.Add(new MetadataProperty(name,
                                         Type: types.GetValueOrDefault(getMethod.ReturnTypeFullName, getMethod.QualifiedReturnTypeFullName),
                                         DeclaringType: types.GetValueOrDefault(typeDef.FullName, typeDef.AssemblyQualifiedName),
                                         IsAttached: true,
                                         IsStatic: false,
                                         HasGetter: true,
-                                        HasSetter: setMethod is not null));
+                                        HasSetter: setMethod is not null,
+                                        IsObsolete: isObsolete,
+                                        ObsoleteMessage: obsoleteMessage,
+                                        ObsoleteIsError: obsoleteIsError));
                                 }
                             }
                             else if (type.IsStatic)
                             {
-                                type.Properties.Add(new MetadataProperty(fieldDef.Name, null, type, false, true, true, false));
+                                type.Properties.Add(new MetadataProperty(fieldDef.Name, null, type, false, true, true, false,
+                                    IsObsolete: fieldDef.IsObsolete,
+                                    ObsoleteMessage: fieldDef.ObsoleteMessage,
+                                    ObsoleteIsError: fieldDef.ObsoleteIsError));
                             }
                         }
                     }
