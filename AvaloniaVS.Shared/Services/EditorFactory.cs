@@ -139,8 +139,7 @@ namespace AvaloniaVS.Services
                 // Prepare the way for the IVsCodeWindow...Note that it may not be created yet
                 // as we need to wait for the IVsTextBuffer to fully initialize first. This is all
                 // handled from CreateDocumentView and the TextEditorHost
-                var docViewObject = CreateDocumentView(pszMkDocument, pszPhysicalView, textLines,
-                    punkDocDataExisting == IntPtr.Zero);
+                var docViewObject = CreateDocumentView(pszMkDocument, pszPhysicalView, textLines);
 
                 // Create the pane that will host our previewer and will be associated with this text data
                 var pane = new EditorPane(GetProject(pvHier), docViewObject);
@@ -223,7 +222,7 @@ namespace AvaloniaVS.Services
             return textLines;
         }
 
-        private TextEditorHost CreateDocumentView(string documentMoniker, string physicalView, IVsTextLines textLines, bool createdDocData)
+        private TextEditorHost CreateDocumentView(string documentMoniker, string physicalView, IVsTextLines textLines)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
 
@@ -234,20 +233,8 @@ namespace AvaloniaVS.Services
                 var componentModel = _serviceProvider.GetService<IComponentModel, SComponentModel>();
                 var editorHost = new TextEditorHost(textLines, documentMoniker, componentModel, _oleServiceProvider);
 
-                if (!createdDocData)
-                {
-                    var adapterService = componentModel.GetService<IVsEditorAdaptersFactoryService>();
-                    var buf = adapterService.GetDocumentBuffer(textLines);
-
-                    // It seems we may get an uninitialized IVsTextBuffer here. Inspecting via break point shows the content type
-                    // is "Inert" and the document/data buffers are empty, thus we aren't actually initialized yet? IIRC this
-                    // relates to some change with intellisense around VS 2019 16.3-ish. So if we aren't initialized yet, we
-                    // don't want to "force" OnLoadCompleted here and we'll wait for the event to actually fire
-                    // We will only get an initialized text buffer if the document had been previously opened in the current
-                    // session, closed, and now reopened and its buffer was in the RunningDocumentTable. 
-                    if (buf != null)
-                        editorHost.OnLoadCompleted(0);
-                }
+                // 主动检查可覆盖「加载已完成、订阅稍后建立」的竞态；未就绪时由 Host 安全重试。
+                editorHost.EnsureInitialized();
 
                 return editorHost;
             }

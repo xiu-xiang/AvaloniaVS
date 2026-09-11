@@ -22,6 +22,7 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.TextManager.Interop;
 using Microsoft.VisualStudio.Threading;
 using Serilog;
 using VSLangProj;
@@ -765,6 +766,90 @@ namespace AvaloniaVS.Views
         private void TextChanged(object sender, TextContentChangedEventArgs e)
         {
             _throttle.Queue(e.After.GetText());
+
+            // 关键兜底：一旦进入「可编辑但不脏」会话态，所有 axaml 都无法 Ctrl+S。
+            // 预览读的是内存缓冲，切换标签仍显示已编辑文本；关标签再开则从磁盘恢复。
+            // .cs 走标准编辑器不受影响。这里在发现未脏时强制同步脏标记。
+            var buffer = e.After.TextBuffer;
+            if (TryGetTextDocument(buffer, out var existingDoc) && existingDoc.IsDirty)
+                return;
+
+            ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                EnsureDocumentMarkedDirty(buffer);
+            }).Task.FireAndForget();
+        }
+
+        /// <summary>
+        /// 确保编辑反映到 VS 文档脏标记，使 Ctrl+S / 关闭提示能真正写入磁盘。
+        /// </summary>
+        private void EnsureDocumentMarkedDirty(ITextBuffer buffer)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                if (TryGetTextDocument(buffer, out var textDocument))
+                {
+                    if (!textDocument.IsDirty)
+                    {
+                        textDocument.UpdateDirtyState(true, DateTime.Now);
+                        Log.Logger.Warning(
+                            "检测到 axaml 编辑后文档未脏，已强制 ITextDocument 标脏：{Path}",
+                            textDocument.FilePath ?? _xamlPath);
+                    }
+
+                    return;
+                }
+
+                Log.Logger.Warning(
+                    "axaml 编辑缓冲区缺少 ITextDocument，尝试 IVsPersistDocData2 / BSF_MODIFIED：{Path}",
+                    _xamlPath);
+
+                var componentModel = Package.GetGlobalService(typeof(Microsoft.VisualStudio.ComponentModelHost.SComponentModel))
+                    as Microsoft.VisualStudio.ComponentModelHost.IComponentModel;
+                var adapters = componentModel?.GetService<Microsoft.VisualStudio.Editor.IVsEditorAdaptersFactoryService>();
+                var vsBuffer = adapters?.GetBufferAdapter(buffer);
+
+                if (vsBuffer is IVsPersistDocData2 persist)
+                {
+                    persist.IsDocDataDirty(out var dirty);
+                    if (dirty == 0)
+                    {
+                        persist.SetDocDataDirty(1);
+                        Log.Logger.Warning("已通过 IVsPersistDocData2 强制标脏：{Path}", _xamlPath);
+                    }
+                }
+
+                // 再写一层缓冲区 MODIFIED 标志，确保 RDT/保存管线能看见变更
+                if (vsBuffer is IVsTextBuffer textBuffer)
+                {
+                    if (ErrorHandler.Succeeded(textBuffer.GetStateFlags(out var flags)) &&
+                        (flags & (uint)BUFFERSTATEFLAGS.BSF_MODIFIED) == 0)
+                    {
+                        textBuffer.SetStateFlags(flags | (uint)BUFFERSTATEFLAGS.BSF_MODIFIED);
+                        Log.Logger.Warning("已设置 BSF_MODIFIED：{Path}", _xamlPath);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Debug(ex, "EnsureDocumentMarkedDirty 失败：{Path}", _xamlPath);
+            }
+        }
+
+        private static bool TryGetTextDocument(ITextBuffer buffer, out ITextDocument document)
+        {
+            if (buffer != null &&
+                buffer.Properties.TryGetProperty(typeof(ITextDocument), out document) &&
+                document != null)
+            {
+                return true;
+            }
+
+            document = null;
+            return false;
         }
 
         private void UpdateLayoutForView()

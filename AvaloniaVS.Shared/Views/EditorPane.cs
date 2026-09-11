@@ -49,6 +49,7 @@ namespace AvaloniaVS.Shared.Views
         private DTEEvents _dteEvents;
         private BuildEvents _buildEvents;
         private bool _isPaused;
+        private bool _editorPaneInitialized;
 
         public EditorPane(Project project, TextEditorHost editorHost)
         {
@@ -121,13 +122,31 @@ namespace AvaloniaVS.Shared.Views
 
         protected override void Dispose(bool disposing)
         {
-            base.Dispose(disposing);
+            ThreadHelper.ThrowIfNotOnUIThread();
 
-            var tm = GetService(typeof(SVsTextManager)) as IVsTextManager;
-            tm?.UnregisterIndependentView(this, _textEditorHost.TextBuffer);
+            // 先阻止延迟初始化回调，再释放设计器及 VS 视图关联。
+            _textEditorHost.CodeWindowCreated -= EditorHostCodeWindowCreated;
+            _textEditorHost.Dispose();
+
+            if (_editorPaneInitialized)
+            {
+                var tm = GetService(typeof(SVsTextManager)) as IVsTextManager;
+                tm?.UnregisterIndependentView(this, _textEditorHost.TextBuffer);
+
+                if (_buildEvents != null)
+                {
+                    _buildEvents.OnBuildBegin -= HandleBuildBegin;
+                    _buildEvents.OnBuildDone -= HandleBuildDone;
+                }
+
+                if (_dteEvents != null)
+                    _dteEvents.ModeChanged -= HandleModeChanged;
+            }
 
             _content?.Dispose();
             _content = null;
+
+            base.Dispose(disposing);
         }
 
         protected override void Initialize()
@@ -177,6 +196,11 @@ namespace AvaloniaVS.Shared.Views
         private void InitializeEditorPane()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (_editorPaneInitialized || _content == null)
+                return;
+
+            _editorPaneInitialized = true;
 
             // Not 100% sure what this does, but I think its related to ensuring the IVsTextBuffer
             // is properly associated with its View
