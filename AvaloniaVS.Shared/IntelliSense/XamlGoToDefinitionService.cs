@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Ide.CompletionEngine;
@@ -11,6 +12,7 @@ using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Threading;
 using RoslynProject = Microsoft.CodeAnalysis.Project;
@@ -60,13 +62,19 @@ namespace AvaloniaVS.IntelliSense
                 return true;
             }
 
-            // 2) 属性 / 附加属性 / 事件名（必须落在属性名标识符上，避免点在值上误跳）
+            // 2) 标记扩展：{Binding Greeting} / {x:Static Type.Member}
+            if (TryResolveMarkupExtension(text, position, parser, out target))
+            {
+                return true;
+            }
+
+            // 3) 属性 / 附加属性 / 事件名（必须落在属性名标识符上，避免点在值上误跳）
             if (TryResolveAttributeName(text, position, parser, out target))
             {
                 return true;
             }
 
-            // 3) 元素类型名
+            // 4) 元素类型名
             if (TryResolveElementType(text, position, parser, out target))
             {
                 return true;
@@ -154,11 +162,334 @@ namespace AvaloniaVS.IntelliSense
             return true;
         }
 
+        /// <summary>
+        /// 解析属性值内的标记扩展（Binding Path / x:Static 成员）。
+        /// </summary>
+        private bool TryResolveMarkupExtension(string text, int position, XmlParser parser, out XamlNavigationTarget target)
+        {
+            target = null;
+
+            if (parser.State != XmlParser.ParserState.AttributeValue)
+            {
+                return false;
+            }
+
+            if (!TryGetAttributeValueSpan(text, parser, out var valueStart, out var valueLength))
+            {
+                return false;
+            }
+
+            if (position < valueStart || position > valueStart + valueLength)
+            {
+                return false;
+            }
+
+            // 定位标记扩展起始 '{'
+            var braceStart = -1;
+            var valueEnd = valueStart + valueLength;
+            for (var i = valueStart; i < valueEnd; i++)
+            {
+                if (text[i] == '{')
+                {
+                    braceStart = i;
+                    break;
+                }
+            }
+
+            if (braceStart < 0 || position < braceStart)
+            {
+                return false;
+            }
+
+            var markupText = text.Substring(braceStart, valueEnd - braceStart);
+            if (!TryGetMarkupExtensionName(markupText, out var extensionName))
+            {
+                return false;
+            }
+
+            if (IsBindingExtension(extensionName))
+            {
+                return TryResolveBindingPath(braceStart, markupText, position, parser, out target);
+            }
+
+            if (IsStaticExtension(extensionName))
+            {
+                return TryResolveStaticMember(text, braceStart, markupText, position, out target);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// {Binding Greeting} / {Binding Path=Foo.Bar} → 跳到 DataType 上的属性。
+        /// </summary>
+        private bool TryResolveBindingPath(
+            int markupAbsStart,
+            string markupText,
+            int position,
+            XmlParser parser,
+            out XamlNavigationTarget target)
+        {
+            target = null;
+
+            if (!TryExtractBindingPath(markupText, out var path, out var pathStartInMarkup))
+            {
+                return false;
+            }
+
+            // 忽略 $parent / #name 等特殊路径前缀（补全支持，导航暂不处理）
+            if (path.StartsWith("$", StringComparison.Ordinal) || path.StartsWith("#", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var pathAbsStart = markupAbsStart + pathStartInMarkup;
+            if (position < pathAbsStart || position > pathAbsStart + path.Length)
+            {
+                return false;
+            }
+
+            var dataTypeName = parser.FindParentAttributeValue("(x\\:)?DataType");
+            if (string.IsNullOrEmpty(dataTypeName))
+            {
+                return false;
+            }
+
+            var currentType = _engine.Helper.LookupType(dataTypeName);
+            if (currentType == null)
+            {
+                return false;
+            }
+
+            var segments = path.Split('.');
+            var offset = 0;
+
+            for (var i = 0; i < segments.Length; i++)
+            {
+                var segment = segments[i];
+                if (string.IsNullOrEmpty(segment))
+                {
+                    return false;
+                }
+
+                var segStart = pathAbsStart + offset;
+                var onSegment = position >= segStart && position <= segStart + segment.Length;
+
+                var prop = currentType.Properties?.FirstOrDefault(p => p.Name == segment);
+                if (prop == null)
+                {
+                    return false;
+                }
+
+                if (onSegment)
+                {
+                    var declaring = prop.DeclaringType?.FullName ?? currentType.FullName;
+                    if (string.IsNullOrEmpty(declaring))
+                    {
+                        return false;
+                    }
+
+                    target = MemberTarget(declaring, segment, segStart, segment.Length);
+                    return true;
+                }
+
+                // 沿路径继续深入下一段的声明类型
+                currentType = prop.Type;
+                if (currentType == null)
+                {
+                    return false;
+                }
+
+                offset += segment.Length + 1; // 含 '.'
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// {x:Static model:TestStaticClass.TestStr1} → 类型或静态成员。
+        /// </summary>
+        private bool TryResolveStaticMember(
+            string text,
+            int markupAbsStart,
+            string markupText,
+            int position,
+            out XamlNavigationTarget target)
+        {
+            target = null;
+
+            if (!TryExtractStaticExpression(markupText, out var expr, out var exprStartInMarkup))
+            {
+                return false;
+            }
+
+            var exprAbsStart = markupAbsStart + exprStartInMarkup;
+            if (position < exprAbsStart || position > exprAbsStart + expr.Length)
+            {
+                return false;
+            }
+
+            var lastDot = expr.LastIndexOf('.');
+            if (lastDot <= 0 || lastDot >= expr.Length - 1)
+            {
+                // 仅类型名：跳到类型
+                var onlyType = _engine.Helper.LookupType(expr);
+                if (onlyType?.FullName is not { Length: > 0 } onlyFullName)
+                {
+                    return false;
+                }
+
+                target = new XamlNavigationTarget
+                {
+                    TargetKind = XamlNavigationTarget.Kind.Type,
+                    TypeFullName = onlyFullName,
+                    SpanStart = exprAbsStart,
+                    SpanLength = expr.Length,
+                };
+                return true;
+            }
+
+            var typeName = expr.Substring(0, lastDot);
+            var memberName = expr.Substring(lastDot + 1);
+            var memberAbsStart = exprAbsStart + lastDot + 1;
+
+            var mdType = _engine.Helper.LookupType(typeName);
+            if (mdType?.FullName is not { Length: > 0 } typeFullName)
+            {
+                return false;
+            }
+
+            // 光标在成员名上 → 跳到静态属性/字段
+            if (position >= memberAbsStart && position <= memberAbsStart + memberName.Length)
+            {
+                var prop = mdType.Properties?.FirstOrDefault(p => p.Name == memberName);
+                var declaring = prop?.DeclaringType?.FullName ?? typeFullName;
+                target = MemberTarget(declaring, memberName, memberAbsStart, memberName.Length);
+                return true;
+            }
+
+            // 光标在类型部分（含 xmlns 前缀）→ 跳到类型
+            if (position >= exprAbsStart && position < exprAbsStart + lastDot)
+            {
+                // 细分前缀与类型名高亮：model:TestStaticClass
+                GetIdentifierSpan(text, Math.Min(position, text.Length - 1), out var idStart, out var idLength);
+                if (idLength <= 0 || idStart < exprAbsStart || idStart + idLength > exprAbsStart + lastDot)
+                {
+                    idStart = exprAbsStart;
+                    idLength = lastDot;
+                }
+
+                target = new XamlNavigationTarget
+                {
+                    TargetKind = XamlNavigationTarget.Kind.Type,
+                    TypeFullName = typeFullName,
+                    SpanStart = idStart,
+                    SpanLength = idLength,
+                };
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetMarkupExtensionName(string markupText, out string name)
+        {
+            name = null;
+            var match = Regex.Match(markupText, @"^\{\s*([^\s,}]+)");
+            if (!match.Success)
+            {
+                return false;
+            }
+
+            name = match.Groups[1].Value;
+            return name.Length > 0;
+        }
+
+        private static bool IsBindingExtension(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return false;
+            }
+
+            // Binding / local:Binding / BindingExtension
+            var simple = name.Contains(':') ? name.Substring(name.IndexOf(':') + 1) : name;
+            return simple.Equals("Binding", StringComparison.OrdinalIgnoreCase)
+                   || simple.Equals("BindingExtension", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsStaticExtension(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return false;
+            }
+
+            // x:Static / Static / StaticExtension
+            var simple = name.Contains(':') ? name.Substring(name.IndexOf(':') + 1) : name;
+            return simple.Equals("Static", StringComparison.OrdinalIgnoreCase)
+                   || simple.Equals("StaticExtension", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 从标记扩展文本提取 Binding 路径及在 markup 内的起始偏移。
+        /// </summary>
+        private static bool TryExtractBindingPath(string markupText, out string path, out int pathStartInMarkup)
+        {
+            path = null;
+            pathStartInMarkup = -1;
+
+            // 优先 Path= 命名参数（可出现在任意位置）
+            var named = Regex.Match(markupText, @"\bPath\s*=\s*([^\s,}]+)", RegexOptions.CultureInvariant);
+            if (named.Success)
+            {
+                path = named.Groups[1].Value;
+                pathStartInMarkup = named.Groups[1].Index;
+                return path.Length > 0;
+            }
+
+            // 位置参数：{Binding Greeting} / {Binding Foo.Bar, Mode=OneWay}
+            var positional = Regex.Match(
+                markupText,
+                @"\{\s*(?:[\w]+\s*:\s*)?Binding(?:Extension)?\s+([^\s,=}]+)",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+            if (positional.Success)
+            {
+                path = positional.Groups[1].Value;
+                pathStartInMarkup = positional.Groups[1].Index;
+                return path.Length > 0;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 从 {x:Static Type.Member} 提取 Type.Member 表达式。
+        /// </summary>
+        private static bool TryExtractStaticExpression(string markupText, out string expr, out int exprStartInMarkup)
+        {
+            expr = null;
+            exprStartInMarkup = -1;
+
+            var match = Regex.Match(
+                markupText,
+                @"\{\s*(?:[\w]+\s*:\s*)?Static(?:Extension)?\s+([^\s,}]+)",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                return false;
+            }
+
+            expr = match.Groups[1].Value;
+            exprStartInMarkup = match.Groups[1].Index;
+            return expr.Length > 0;
+        }
+
         private bool TryResolveAttributeName(string text, int position, XmlParser parser, out XamlNavigationTarget target)
         {
             target = null;
 
-            // 属性值内不按属性名跳转（事件已单独处理）
+            // 属性值内不按属性名跳转（事件 / 标记扩展已单独处理）
             if (parser.State == XmlParser.ParserState.AttributeValue)
             {
                 return false;
@@ -530,6 +861,8 @@ namespace AvaloniaVS.IntelliSense
                 var workspace = GetWorkspace();
                 if (workspace == null)
                 {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    ShowCannotNavigateToDefinition();
                     return;
                 }
 
@@ -570,17 +903,17 @@ namespace AvaloniaVS.IntelliSense
                 if (method == null || project == null)
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    SetStatus($"未找到事件处理方法: {xamlClassName}.{handlerMethodName}");
+                    ShowCannotNavigateToDefinition();
                     return;
                 }
 
                 // 走 VS/Roslyn 导航（源码或反编译，与 WPF 一致）
                 await NavigateWithVisualStudioAsync(workspace, method, project).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                SetStatus($"转到事件处理失败: {ex.Message}");
+                ShowCannotNavigateToDefinition();
             }
         }
 
@@ -591,6 +924,8 @@ namespace AvaloniaVS.IntelliSense
                 var workspace = GetWorkspace();
                 if (workspace == null)
                 {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    ShowCannotNavigateToDefinition();
                     return;
                 }
 
@@ -647,17 +982,17 @@ namespace AvaloniaVS.IntelliSense
                 if (symbol == null || project == null)
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    SetStatus($"未能解析类型: {typeFullName}");
+                    ShowCannotNavigateToDefinition();
                     return;
                 }
 
                 // 走 VS/Roslyn 导航：有源码则开源文件，否则开反编译视图（勿用对象浏览器）
                 await NavigateWithVisualStudioAsync(workspace, symbol, project).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                SetStatus($"转到定义失败: {ex.Message}");
+                ShowCannotNavigateToDefinition();
             }
         }
 
@@ -695,7 +1030,7 @@ namespace AvaloniaVS.IntelliSense
                 return;
             }
 
-            SetStatus($"无法打开定义: {symbol.ToDisplayString()}");
+            ShowCannotNavigateToDefinition();
         }
 
         private static ISymbol FindMember(INamedTypeSymbol typeSymbol, string memberName)
@@ -703,6 +1038,29 @@ namespace AvaloniaVS.IntelliSense
                ?? typeSymbol.GetMembers(memberName + "Property").OfType<IFieldSymbol>().FirstOrDefault()
                ?? typeSymbol.GetMembers(memberName + "Event").OfType<IFieldSymbol>().FirstOrDefault()
                ?? typeSymbol.GetMembers(memberName).FirstOrDefault();
+
+        /// <summary>
+        /// 与 WPF XAML 一致：无法转到定义时弹出「无法导航到定义。」对话框。
+        /// </summary>
+        public static void ShowCannotNavigateToDefinition()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                VsShellUtilities.ShowMessageBox(
+                    ServiceProvider.GlobalProvider,
+                    "无法导航到定义。",
+                    string.Empty,
+                    OLEMSGICON.OLEMSGICON_CRITICAL,
+                    OLEMSGBUTTON.OLEMSGBUTTON_OK,
+                    OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+            }
+            catch
+            {
+                // 忽略对话框失败，避免打断编辑器
+            }
+        }
 
         private static VisualStudioWorkspace GetWorkspace()
         {
@@ -789,23 +1147,6 @@ namespace AvaloniaVS.IntelliSense
             catch
             {
                 return false;
-            }
-        }
-
-        private static void SetStatus(string message)
-        {
-            ThreadHelper.ThrowIfNotOnUIThread();
-            try
-            {
-                var dte = Package.GetGlobalService(typeof(DTE)) as DTE2;
-                if (dte != null)
-                {
-                    dte.StatusBar.Text = message;
-                }
-            }
-            catch
-            {
-                // 忽略
             }
         }
     }

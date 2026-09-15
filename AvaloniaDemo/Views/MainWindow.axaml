@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="AvaloniaDemo.Views.MainWindow"
+        xmlns:model="using:AvaloniaDemo.Models"
         x:DataType="vm:MainViewModel"
         Icon="/Assets/avalonia-logo.ico"
         Title="AvaloniaDemo">
@@ -15,12 +16,12 @@
         <vm:MainViewModel />
     </Design.DataContext>
 
-  <Grid   RowDefinitions="auto,*" Background="AliceBlue">
+  <Grid   RowDefinitions="auto,*,50" Background="AliceBlue">
     <TextBlock Text="Hello, Avalonia!" Foreground="BurlyWood"  Grid.Row="0" Background="AliceBlue" TextAlignment="Center">
         
     </TextBlock>
-     <Button Background="Red"   Content="{Binding Greeting}" Grid.Row="1"/>
-  <TextBox Watermark="Enter your text here..."/>
+   <Button Background="Red"   Content="{Binding Greeting}" Grid.Row="1"/>
+    <TextBox Grid.Row="2"  Width="200" Foreground="Black" PlaceholderText="{x:Static model:TestStaticClass.TestStr1}"/>
   </Grid>
 
 </Window>

@@ -48,6 +48,7 @@
   - 对文档中已写属性名显示警告波浪线与悬停提示（风格接近 CS0618）
 - **转到定义**
   - 支持 AXAML 中类型、属性、附加属性、事件名以及事件处理方法的 F12 / Ctrl+点击导航
+  - 支持 `{Binding Path}`（需 `x:DataType`）与 `{x:Static Type.Member}` 跳转到对应成员/类型
 - **补全体验改进**
   - 属性引号内补全、`{x:Static}` 成员过滤等交互优化
 - **多宿主支持**
@@ -145,6 +146,7 @@ Thanks to the Avalonia authors and contributors, and to [kongdetuo](https://gith
   - Warning squiggles and hover tooltips for obsolete attributes already present in AXAML
 - **Go to Definition**
   - F12 / Ctrl+Click for types, properties, attached members, events, and event handlers in AXAML
+  - Also navigates `{Binding Path}` (requires `x:DataType`) and `{x:Static Type.Member}`
 - **Completion UX improvements**
   - Better in-quotes completion and `{x:Static}` member filtering
 - **Multi-host packages**

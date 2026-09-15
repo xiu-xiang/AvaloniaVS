@@ -15,7 +15,7 @@ using IServiceProvider = System.IServiceProvider;
 namespace AvaloniaVS.IntelliSense
 {
     /// <summary>
-    /// 处理 AXAML 中的「转到定义」(F12)：类型 / 属性 / 附加属性 / 事件 / 事件处理方法。
+    /// 处理 AXAML 中的「转到定义」(F12)：类型 / 属性 / Binding / x:Static / 事件等。
     /// Ctrl+点击由 <see cref="XamlNavigableSymbolSourceProvider"/> 提供。
     /// </summary>
     internal sealed class XamlGoToDefinitionCommandHandler : IOleCommandTarget
@@ -61,14 +61,21 @@ namespace AvaloniaVS.IntelliSense
             ThreadHelper.ThrowIfNotOnUIThread();
 
             if (pguidCmdGroup == VSConstants.GUID_VSStandardCommandSet97
-                && nCmdID == (uint)VSConstants.VSStd97CmdID.GotoDefn)
+                && nCmdID == (uint)VSConstants.VSStd97CmdID.GotoDefn
+                && _textView.TextBuffer.Properties.ContainsProperty(typeof(XamlBufferMetadata)))
             {
                 var caret = _textView.Caret.Position.BufferPosition.Position;
                 if (_service.TryResolve(_textView.TextBuffer, caret, out var target))
                 {
                     _service.Navigate(target);
-                    return VSConstants.S_OK;
                 }
+                else
+                {
+                    // 与 WPF XAML 一致：无法跳转时弹出提示，并吞掉命令
+                    XamlGoToDefinitionService.ShowCannotNavigateToDefinition();
+                }
+
+                return VSConstants.S_OK;
             }
 
             return _nextCommandHandler.Exec(ref pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
