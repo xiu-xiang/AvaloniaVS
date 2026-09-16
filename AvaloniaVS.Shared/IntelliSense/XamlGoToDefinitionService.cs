@@ -55,6 +55,7 @@ namespace AvaloniaVS.IntelliSense
             _engine.Helper.SetMetadata(metadata.CompletionMetadata, text, assemblyName);
 
             var parser = XmlParser.Parse(text.AsMemory(), 0, position);
+            var currentFilePath = TryGetBufferFilePath(buffer);
 
             // 1) 事件处理：Click="Button_Click" 引号内的方法名
             if (TryResolveEventHandler(text, position, parser, out target))
@@ -62,19 +63,25 @@ namespace AvaloniaVS.IntelliSense
                 return true;
             }
 
-            // 2) 标记扩展：{Binding Greeting} / {x:Static Type.Member}
-            if (TryResolveMarkupExtension(text, position, parser, out target))
+            // 2) 标记扩展：{Binding} / {x:Static} / {StaticResource} / {DynamicResource}
+            if (TryResolveMarkupExtension(text, position, parser, currentFilePath, out target))
             {
                 return true;
             }
 
-            // 3) 属性 / 附加属性 / 事件名（必须落在属性名标识符上，避免点在值上误跳）
+            // 3) 样式类：Classes="accent" / Classes.accent
+            if (TryResolveStyleClass(text, position, parser, currentFilePath, out target))
+            {
+                return true;
+            }
+
+            // 4) 属性 / 附加属性 / 事件名（必须落在属性名标识符上，避免点在值上误跳）
             if (TryResolveAttributeName(text, position, parser, out target))
             {
                 return true;
             }
 
-            // 4) 元素类型名
+            // 5) 元素类型名
             if (TryResolveElementType(text, position, parser, out target))
             {
                 return true;
@@ -93,13 +100,20 @@ namespace AvaloniaVS.IntelliSense
                 return;
             }
 
-            if (target.TargetKind == XamlNavigationTarget.Kind.EventHandler)
+            switch (target.TargetKind)
             {
-                NavigateToEventHandlerAsync(target.XamlClassName, target.HandlerMethodName).FireAndForget();
-            }
-            else
-            {
-                NavigateToSymbolAsync(target.TypeFullName, target.MemberName).FireAndForget();
+                case XamlNavigationTarget.Kind.EventHandler:
+                    NavigateToEventHandlerAsync(target.XamlClassName, target.HandlerMethodName).FireAndForget();
+                    break;
+                case XamlNavigationTarget.Kind.StyleClass:
+                    NavigateToStyleClassAsync(target.MemberName, target.PreferredFilePath).FireAndForget();
+                    break;
+                case XamlNavigationTarget.Kind.ResourceKey:
+                    NavigateToResourceKeyAsync(target.MemberName, target.PreferredFilePath).FireAndForget();
+                    break;
+                default:
+                    NavigateToSymbolAsync(target.TypeFullName, target.MemberName).FireAndForget();
+                    break;
             }
         }
 
@@ -163,9 +177,14 @@ namespace AvaloniaVS.IntelliSense
         }
 
         /// <summary>
-        /// 解析属性值内的标记扩展（Binding Path / x:Static 成员）。
+        /// 解析属性值内的标记扩展（Binding / x:Static / StaticResource / DynamicResource）。
         /// </summary>
-        private bool TryResolveMarkupExtension(string text, int position, XmlParser parser, out XamlNavigationTarget target)
+        private bool TryResolveMarkupExtension(
+            string text,
+            int position,
+            XmlParser parser,
+            string currentFilePath,
+            out XamlNavigationTarget target)
         {
             target = null;
 
@@ -217,7 +236,212 @@ namespace AvaloniaVS.IntelliSense
                 return TryResolveStaticMember(text, braceStart, markupText, position, out target);
             }
 
+            if (IsResourceExtension(extensionName))
+            {
+                return TryResolveResourceKey(braceStart, markupText, position, currentFilePath, out target);
+            }
+
             return false;
+        }
+
+        /// <summary>
+        /// Classes="accent danger" 属性值，或 Classes.accent 属性名中的样式类。
+        /// </summary>
+        private bool TryResolveStyleClass(
+            string text,
+            int position,
+            XmlParser parser,
+            string currentFilePath,
+            out XamlNavigationTarget target)
+        {
+            target = null;
+
+            // Classes="foo bar"：属性值中的类名片段
+            if (parser.State == XmlParser.ParserState.AttributeValue)
+            {
+                var attrName = GetFullAttributeName(text, parser);
+                if (!string.Equals(attrName, "Classes", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (!TryGetAttributeValueSpan(text, parser, out var valueStart, out var valueLength))
+                {
+                    return false;
+                }
+
+                if (position < valueStart || position > valueStart + valueLength)
+                {
+                    return false;
+                }
+
+                if (!TryGetStyleClassTokenAt(text, valueStart, valueLength, position, out var tokenStart, out var tokenLength))
+                {
+                    return false;
+                }
+
+                var valueClassName = text.Substring(tokenStart, tokenLength);
+                target = StyleClassTarget(valueClassName, currentFilePath, tokenStart, tokenLength);
+                return true;
+            }
+
+            // Classes.accent=：属性名中 '.' 后的类名
+            if (parser.State is not (XmlParser.ParserState.StartAttribute
+                or XmlParser.ParserState.BeforeAttributeValue
+                or XmlParser.ParserState.AfterAttributeValue
+                or XmlParser.ParserState.InsideElement))
+            {
+                return false;
+            }
+
+            if (parser.State == XmlParser.ParserState.InsideElement
+                && IsPositionOnTagName(text, position, parser))
+            {
+                return false;
+            }
+
+            if (!TryGetAttributeNameSpan(text, position, parser, out var nameStart, out var nameLength))
+            {
+                return false;
+            }
+
+            if (position < nameStart || position > nameStart + nameLength)
+            {
+                return false;
+            }
+
+            var attributeName = text.Substring(nameStart, nameLength);
+            if (!attributeName.StartsWith("Classes.", StringComparison.Ordinal)
+                || attributeName.Length <= "Classes.".Length)
+            {
+                return false;
+            }
+
+            var classNameStart = nameStart + "Classes.".Length;
+            var attrClassName = attributeName.Substring("Classes.".Length);
+            if (position < classNameStart || position > classNameStart + attrClassName.Length)
+            {
+                return false;
+            }
+
+            target = StyleClassTarget(attrClassName, currentFilePath, classNameStart, attrClassName.Length);
+            return true;
+        }
+
+        /// <summary>
+        /// {StaticResource Key} / {DynamicResource Key} → 搜索 x:Key 定义。
+        /// </summary>
+        private static bool TryResolveResourceKey(
+            int markupAbsStart,
+            string markupText,
+            int position,
+            string currentFilePath,
+            out XamlNavigationTarget target)
+        {
+            target = null;
+
+            if (!TryExtractResourceKey(markupText, out var key, out var keyStartInMarkup))
+            {
+                return false;
+            }
+
+            var keyAbsStart = markupAbsStart + keyStartInMarkup;
+            if (position < keyAbsStart || position > keyAbsStart + key.Length)
+            {
+                return false;
+            }
+
+            target = new XamlNavigationTarget
+            {
+                TargetKind = XamlNavigationTarget.Kind.ResourceKey,
+                MemberName = key,
+                PreferredFilePath = currentFilePath,
+                SpanStart = keyAbsStart,
+                SpanLength = key.Length,
+            };
+            return true;
+        }
+
+        private static XamlNavigationTarget StyleClassTarget(
+            string className,
+            string preferredFilePath,
+            int spanStart,
+            int spanLength)
+            => new XamlNavigationTarget
+            {
+                TargetKind = XamlNavigationTarget.Kind.StyleClass,
+                MemberName = className,
+                PreferredFilePath = preferredFilePath,
+                SpanStart = spanStart,
+                SpanLength = spanLength,
+            };
+
+        /// <summary>
+        /// 从 Classes 属性值中取光标所在的类名 token（按空白分隔）。
+        /// </summary>
+        private static bool TryGetStyleClassTokenAt(
+            string text,
+            int valueStart,
+            int valueLength,
+            int position,
+            out int tokenStart,
+            out int tokenLength)
+        {
+            tokenStart = 0;
+            tokenLength = 0;
+            var valueEnd = valueStart + valueLength;
+            if (position < valueStart || position > valueEnd)
+            {
+                return false;
+            }
+
+            // 允许光标紧贴 token 末尾
+            var pos = position;
+            if (pos == valueEnd && pos > valueStart)
+            {
+                pos--;
+            }
+
+            if (pos < valueStart || pos >= valueEnd || !IsStyleClassChar(text[pos]))
+            {
+                if (pos > valueStart && IsStyleClassChar(text[pos - 1]))
+                {
+                    pos--;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            tokenStart = pos;
+            while (tokenStart > valueStart && IsStyleClassChar(text[tokenStart - 1]))
+            {
+                tokenStart--;
+            }
+
+            var tokenEnd = pos + 1;
+            while (tokenEnd < valueEnd && IsStyleClassChar(text[tokenEnd]))
+            {
+                tokenEnd++;
+            }
+
+            tokenLength = tokenEnd - tokenStart;
+            return tokenLength > 0;
+        }
+
+        private static bool IsStyleClassChar(char c)
+            => char.IsLetterOrDigit(c) || c == '_' || c == '-';
+
+        private static string TryGetBufferFilePath(ITextBuffer buffer)
+        {
+            if (buffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument document)
+                && !string.IsNullOrEmpty(document?.FilePath))
+            {
+                return document.FilePath;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -431,6 +655,21 @@ namespace AvaloniaVS.IntelliSense
                    || simple.Equals("StaticExtension", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static bool IsResourceExtension(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return false;
+            }
+
+            // StaticResource / DynamicResource（可带命名空间前缀或 Extension 后缀）
+            var simple = name.Contains(':') ? name.Substring(name.IndexOf(':') + 1) : name;
+            return simple.Equals("StaticResource", StringComparison.OrdinalIgnoreCase)
+                   || simple.Equals("StaticResourceExtension", StringComparison.OrdinalIgnoreCase)
+                   || simple.Equals("DynamicResource", StringComparison.OrdinalIgnoreCase)
+                   || simple.Equals("DynamicResourceExtension", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>
         /// 从标记扩展文本提取 Binding 路径及在 markup 内的起始偏移。
         /// </summary>
@@ -483,6 +722,39 @@ namespace AvaloniaVS.IntelliSense
             expr = match.Groups[1].Value;
             exprStartInMarkup = match.Groups[1].Index;
             return expr.Length > 0;
+        }
+
+        /// <summary>
+        /// 从 {StaticResource Key} / {DynamicResource ResourceKey=Key} 提取资源键。
+        /// </summary>
+        private static bool TryExtractResourceKey(string markupText, out string key, out int keyStartInMarkup)
+        {
+            key = null;
+            keyStartInMarkup = -1;
+
+            var named = Regex.Match(
+                markupText,
+                @"\bResourceKey\s*=\s*([^\s,}]+)",
+                RegexOptions.CultureInvariant);
+            if (named.Success)
+            {
+                key = named.Groups[1].Value;
+                keyStartInMarkup = named.Groups[1].Index;
+                return key.Length > 0;
+            }
+
+            var positional = Regex.Match(
+                markupText,
+                @"\{\s*(?:[\w]+\s*:\s*)?(?:Static|Dynamic)Resource(?:Extension)?\s+([^\s,=}]+)",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+            if (positional.Success)
+            {
+                key = positional.Groups[1].Value;
+                keyStartInMarkup = positional.Groups[1].Index;
+                return key.Length > 0;
+            }
+
+            return false;
         }
 
         private bool TryResolveAttributeName(string text, int position, XmlParser parser, out XamlNavigationTarget target)
@@ -854,6 +1126,60 @@ namespace AvaloniaVS.IntelliSense
             return true;
         }
 
+        /// <summary>
+        /// 搜索解决方案中 Selector 里的样式类定义并打开。
+        /// </summary>
+        private async Task NavigateToStyleClassAsync(string className, string preferredFilePath)
+        {
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (XamlSourceDefinitionLocator.TryFindStyleClass(
+                        className,
+                        preferredFilePath,
+                        out var filePath,
+                        out var offset)
+                    && OpenFileAtOffset(filePath, offset))
+                {
+                    return;
+                }
+
+                ShowCannotNavigateToDefinition();
+            }
+            catch
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowCannotNavigateToDefinition();
+            }
+        }
+
+        /// <summary>
+        /// 搜索解决方案中 x:Key 资源定义并打开（类似 WPF StaticResource）。
+        /// </summary>
+        private async Task NavigateToResourceKeyAsync(string resourceKey, string preferredFilePath)
+        {
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (XamlSourceDefinitionLocator.TryFindResourceKey(
+                        resourceKey,
+                        preferredFilePath,
+                        out var filePath,
+                        out var offset)
+                    && OpenFileAtOffset(filePath, offset))
+                {
+                    return;
+                }
+
+                ShowCannotNavigateToDefinition();
+            }
+            catch
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowCannotNavigateToDefinition();
+            }
+        }
+
         private async Task NavigateToEventHandlerAsync(string xamlClassName, string handlerMethodName)
         {
             try
@@ -1149,6 +1475,49 @@ namespace AvaloniaVS.IntelliSense
                 return false;
             }
         }
+
+        /// <summary>
+        /// 按文档字符偏移打开文件并定位（用于 AXAML 源内跳转）。
+        /// </summary>
+        private static bool OpenFileAtOffset(string filePath, int offset)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                if (string.IsNullOrEmpty(filePath) || offset < 0 || !System.IO.File.Exists(filePath))
+                {
+                    return false;
+                }
+
+                var content = System.IO.File.ReadAllText(filePath);
+                GetLineColumn(content, Math.Min(offset, content.Length), out var line, out var column);
+                return OpenFileAt(filePath, line, column);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void GetLineColumn(string text, int offset, out int line, out int column)
+        {
+            line = 0;
+            column = 0;
+            var limit = Math.Min(offset, text.Length);
+            for (var i = 0; i < limit; i++)
+            {
+                if (text[i] == '\n')
+                {
+                    line++;
+                    column = 0;
+                }
+                else if (text[i] != '\r')
+                {
+                    column++;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -1161,6 +1530,10 @@ namespace AvaloniaVS.IntelliSense
             Type,
             Member,
             EventHandler,
+            /// <summary>Classes 样式类 → 搜索 Selector</summary>
+            StyleClass,
+            /// <summary>StaticResource / DynamicResource 键 → 搜索 x:Key</summary>
+            ResourceKey,
         }
 
         public Kind TargetKind { get; set; }
@@ -1168,6 +1541,8 @@ namespace AvaloniaVS.IntelliSense
         public string MemberName { get; set; }
         public string XamlClassName { get; set; }
         public string HandlerMethodName { get; set; }
+        /// <summary>优先搜索的当前 AXAML 路径（样式类 / 资源键）。</summary>
+        public string PreferredFilePath { get; set; }
         public int SpanStart { get; set; }
         public int SpanLength { get; set; }
     }

@@ -29,6 +29,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlObsoleteTaggerProvider.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlGoToDefinitionCommandHandler.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlGoToDefinitionService.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlSourceDefinitionLocator.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlNavigableSymbolSource.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)intellisense\XamlPasteCommandHandler.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlTextManipulatorRegistrar.cs" />

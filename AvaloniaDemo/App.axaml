@@ -3,13 +3,28 @@
              x:Class="AvaloniaDemo.App"
              xmlns:local="using:AvaloniaDemo"
              RequestedThemeVariant="Default">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
 
     <Application.DataTemplates>
         <local:ViewLocator />
     </Application.DataTemplates>
 
+    <!-- 应用级资源：MainWindow 中 StaticResource DemoBrush 应 F12 跳到此处 -->
+    <Application.Resources>
+        <SolidColorBrush x:Key="DemoBrush" Color="DodgerBlue" />
+        <SolidColorBrush x:Key="AppAccentBrush" Color="#FF6F00" />
+    </Application.Resources>
+
     <Application.Styles>
         <FluentTheme />
+        <!-- 应用级样式类：MainWindow 中 Classes="accent" 应 F12 跳到此处 -->
+        <Style Selector="Button.accent">
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource DemoBrush}" />
+            <Setter Property="Padding" Value="16,8" />
+        </Style>
+        <Style Selector="Button.app-warn">
+            <Setter Property="Background" Value="{StaticResource AppAccentBrush}" />
+            <Setter Property="Foreground" Value="White" />
+        </Style>
     </Application.Styles>
 </Application>

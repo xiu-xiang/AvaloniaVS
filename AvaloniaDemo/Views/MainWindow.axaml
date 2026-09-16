@@ -3,25 +3,165 @@
         xmlns:vm="using:AvaloniaDemo.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
         x:Class="AvaloniaDemo.Views.MainWindow"
         xmlns:model="using:AvaloniaDemo.Models"
         x:DataType="vm:MainViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="AvaloniaDemo">
+        Title="AvaloniaDemo — 转到定义测试">
 
     <Design.DataContext>
-        <!-- This only sets the DataContext for the previewer in an IDE,
-             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
         <vm:MainViewModel />
     </Design.DataContext>
 
-  <Grid   RowDefinitions="auto,*,50" Background="AliceBlue">
-    <TextBlock Text="Hello, Avalonia!" Foreground="BurlyWood"  Grid.Row="0" Background="AliceBlue" TextAlignment="Center">
-        
-    </TextBlock>
-   <Button Background="Red"   Content="{Binding Greeting}" Grid.Row="1"/>
-    <TextBox Grid.Row="2"  Width="200" Foreground="Black" PlaceholderText="{x:Static model:TestStaticClass.TestStr1}"/>
-  </Grid>
+    <!-- ========== 顶部：本页样式 / 资源（从底部 F12 应跳到此处）========== -->
+    <Window.Resources>
+        <SolidColorBrush x:Key="LocalTitleBrush" Color="#2E7D32" />
+        <SolidColorBrush x:Key="LocalCardBrush" Color="#E3F2FD" />
+        <SolidColorBrush x:Key="LocalDangerBrush" Color="#C62828" />
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="TextBlock.page-title">
+            <Setter Property="FontSize" Value="22" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource LocalTitleBrush}" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="{StaticResource LocalCardBrush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="16" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+        <Style Selector="Button.local-primary">
+            <Setter Property="Background" Value="#1565C0" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Padding" Value="16,8" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+        </Style>
+        <Style Selector="Button.local-danger">
+            <Setter Property="Background" Value="{StaticResource LocalDangerBrush}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Padding" Value="16,8" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+        </Style>
+        <Style Selector="TextBox.field">
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+    </Window.Styles>
+
+    <!-- ========== 主体：铺满窗口 ========== -->
+    <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+        <!-- 顶栏说明 -->
+        <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,8">
+            <TextBlock Classes="page-title" Text="转到定义测试页" />
+            <TextBlock Text="在底部控件的 Classes / StaticResource / Binding / x:Static 上按 F12，应跳到本页顶部或 App.axaml 的定义处。"
+                       TextWrapping="Wrap"
+                       Opacity="0.75" />
+        </StackPanel>
+
+        <!-- 中部可滚动测试区 -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="4">
+                <Border Classes="card">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="1) 本页样式类 Classes（F12 → 上方 Window.Styles）"
+                                   FontWeight="SemiBold" />
+                        <WrapPanel>
+                            <Button Classes="local-primary" Content="local-primary → Style" />
+                            <Button Classes="local-danger" Content="local-danger → Style" />
+                        </WrapPanel>
+                        <TextBox Classes="field"
+                                 Watermark="Classes=field → 上方 TextBox.field" />
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="2) 本页静态资源 StaticResource（F12 → 上方 Window.Resources）"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="LocalTitleBrush"
+                                   Foreground="{StaticResource LocalTitleBrush}"
+                                   FontSize="16" />
+                        <Border Background="{StaticResource LocalCardBrush}"
+                                Height="40"
+                                CornerRadius="4" />
+                        <TextBlock Text="LocalDangerBrush"
+                                   Foreground="{StaticResource LocalDangerBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="3) 应用级样式 / 资源（F12 → App.axaml）"
+                                   FontWeight="SemiBold" />
+                        <Button Classes="accent"
+                                Content="Classes=accent → App Button.accent"
+                                HorizontalAlignment="Left" />
+                        <Button Background="{StaticResource DemoBrush}"
+                                Content="StaticResource DemoBrush → App"
+                                Foreground="White"
+                                Padding="16,8"
+                                HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="4) Binding / x:Static"
+                                   FontWeight="SemiBold" />
+                        <Button Content="{Binding Greeting}"
+                                Classes="local-primary"
+                                HorizontalAlignment="Left" />
+                        <TextBox Classes="field"
+                                 Width="280"
+                                 HorizontalAlignment="Left"
+                                 PlaceholderText="{x:Static model:TestStaticClass.TestStr1}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 占位，把「底部测试区」顶到滚动底部，方便测自下而上跳转 -->
+                <Border Height="280"
+                        Background="#F5F5F5"
+                        CornerRadius="8"
+                        Margin="0,8,0,8">
+                    <TextBlock Text="（中间空白区域：向下滚动到底部再 F12）"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Opacity="0.5" />
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ========== 底部：自下而上跳转测试区 ========== -->
+        <Border Grid.Row="2"
+                Classes="card"
+                Margin="0,8,0,0"
+                Background="#FFF8E1">
+            <StackPanel Spacing="10">
+                <TextBlock Text="▼ 底部跳转起点（F12 应跳到本页顶部 Styles / Resources，或 App.axaml）"
+                           FontWeight="Bold" />
+                <WrapPanel>
+                    <Button Classes="local-primary" Content="↑ local-primary" />
+                    <Button Classes="local-danger" Content="↑ local-danger" />
+                    <Button Classes="accent" Content="↑ accent (App)" />
+                </WrapPanel>
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <TextBlock Classes="page-title" Text="↑ page-title" FontSize="16" Margin="0" />
+                    <TextBlock Foreground="{StaticResource LocalTitleBrush}"
+                               Text="↑ LocalTitleBrush"
+                               VerticalAlignment="Center" />
+                    <TextBlock Foreground="{StaticResource DemoBrush}"
+                               Text="↑ DemoBrush (App)"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBox Classes="field"
+                         Watermark="↑ Classes=field"
+                         PlaceholderText="{x:Static model:TestStaticClass.TestStr1}" />
+            </StackPanel>
+        </Border>
+    </Grid>
 
 </Window>

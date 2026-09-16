@@ -32,6 +32,7 @@ AxamlTPreviewer 是面向 **Visual Studio 2022** 的 **Avalonia / AXAML** 开发
 - **转到定义**
   - 支持对 AXAML 中类型、属性、附加属性、事件及事件处理方法使用 F12 / Ctrl+点击导航
   - 支持 `{Binding Path}`（依赖 `x:DataType`）与 `{x:Static Type.Member}` 跳转到对应成员/类型
+  - 支持 `Classes` 样式类名跳转到 `Selector`，以及 `{StaticResource}` / `{DynamicResource}` 跳转到 `x:Key`
 
 ## 功能列表
 
@@ -39,7 +40,7 @@ AxamlTPreviewer 是面向 **Visual Studio 2022** 的 **Avalonia / AXAML** 开发
 - AXAML 智能代码补全（IntelliSense）：元素、属性、绑定与标记扩展等
 - **样式类补全**（特色功能）
 - 已废弃成员补全提示与编辑器警告标记
-- 转到定义（类型 / 成员 / 事件处理程序 / Binding / x:Static）
+- 转到定义（类型 / 成员 / 事件处理程序 / Binding / x:Static / Classes / StaticResource）
 - 绑定表达式补全（`{Binding ...}`）
 - AXAML 文件图标
 - 代码片段（Snippets）
