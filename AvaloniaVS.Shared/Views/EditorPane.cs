@@ -461,18 +461,180 @@ namespace AvaloniaVS.Shared.Views
             ppvObject = IntPtr.Zero;
             return VSConstants.E_PENDING;
         }
-        int IVsBackForwardNavigation.NavigateTo(IVsWindowFrame pFrame, string bstrData, object punk) =>
-            (_textEditorHost.VsCodeWindow as IVsBackForwardNavigation)?.NavigateTo(pFrame, bstrData, punk) ?? VSConstants.E_PENDING;
+
+        // —— 向后/向前导航：自实现登记与还原（VsCodeWindow 适配器通常不处理 BF 栈）——
+
+        /// <summary>导航点数据前缀，与转到定义压栈格式一致。</summary>
+        internal const string CaretNavigationPrefix = "axaml-caret:";
+
+        int IVsBackForwardNavigation.NavigateTo(IVsWindowFrame pFrame, string bstrData, object punk)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            // 自定义数据必须优先处理：原生 CodeWindow 对非 GoBackMarker 也返回 S_OK，
+            // 先转发会吞掉 AXAML 导航，既不激活文档，也不恢复光标。
+            if (TryParseCaretNavigationData(bstrData, out var line, out var column))
+            {
+                if (pFrame == null || ErrorHandler.Failed(pFrame.Show()))
+                {
+                    return VSConstants.E_FAIL;
+                }
+
+                return TrySetTextViewCaret(line, column) ? VSConstants.S_OK : VSConstants.E_FAIL;
+            }
+
+            // 原生文本视图登记的 GoBackMarker 仍交还原生编辑器处理。
+            return (_textEditorHost.VsCodeWindow as IVsBackForwardNavigation)
+                ?.NavigateTo(pFrame, bstrData, punk) ?? VSConstants.E_FAIL;
+        }
+
         int IVsBackForwardNavigation.IsEqual(IVsWindowFrame pFrame, string bstrData, object punk, out int fReplaceSelf)
         {
-            if (_textEditorHost.VsCodeWindow is IVsBackForwardNavigation bfn)
-                return bfn.IsEqual(pFrame, bstrData, punk, out fReplaceSelf);
-
+            // S_OK 本身表示导航项相等；fReplaceSelf 只决定相等时是否替换旧项。
+            // 不能只设置 fReplaceSelf=0 后返回 S_OK，否则所有 AXAML 项都会被合并。
+            // 此处没有两个历史项可供比较，保守保留自定义项，且不能拿实时光标代替历史项。
             fReplaceSelf = 0;
-            return VSConstants.E_PENDING;
+            if (TryParseCaretNavigationData(bstrData, out _, out _))
+            {
+                return VSConstants.E_FAIL;
+            }
+
+            // 原生导航项保留其基于 GoBackMarker 的相等性判定。
+            return (_textEditorHost.VsCodeWindow as IVsBackForwardNavigation)
+                ?.IsEqual(pFrame, bstrData, punk, out fReplaceSelf) ?? VSConstants.E_FAIL;
         }
-        bool IVsBackForwardNavigation2.RequestAddNavigationItem(IVsWindowFrame frame) =>
-            (_textEditorHost.VsCodeWindow as IVsBackForwardNavigation2)?.RequestAddNavigationItem(frame) ?? false;
+
+        bool IVsBackForwardNavigation2.RequestAddNavigationItem(IVsWindowFrame frame)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                // 不信任 VsCodeWindow 原生实现（常返回 true 却未真正压栈）
+                return TryAddCaretNavigationItem(frame);
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Debug(ex, "RequestAddNavigationItem 失败");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 将当前光标写入 VS 向后/向前导航栈（AddNewBFNavigationItem）。
+        /// 转到定义需在「源位置」与「目标位置」各压一次，回退按钮才会点亮。
+        /// </summary>
+        internal bool TryAddCaretNavigationItem(IVsWindowFrame frame)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (frame == null || !TryGetTextViewCaret(out var line, out var column))
+            {
+                Log.Logger.Debug("TryAddCaretNavigationItem：无法读取光标");
+                return false;
+            }
+
+            var uiShell = Package.GetGlobalService(typeof(SVsUIShell)) as IVsUIShell;
+            if (uiShell == null)
+            {
+                return false;
+            }
+
+            var data = EncodeCaretNavigationData(line, column);
+            // punk=本 EditorPane：回退时 VS 对其调用 NavigateTo(bstrData)
+            var hr = uiShell.AddNewBFNavigationItem(frame, data, this, 0);
+            if (ErrorHandler.Failed(hr))
+            {
+                Log.Logger.Debug("AddNewBFNavigationItem 失败 HR=0x{Hr:X8} data={Data}", hr, data);
+                return false;
+            }
+
+            Log.Logger.Debug("已压入导航点 {Data}", data);
+            return true;
+        }
+
+        internal static string EncodeCaretNavigationData(int line, int column)
+            => $"{CaretNavigationPrefix}{line},{column}";
+
+        internal static bool TryParseCaretNavigationData(string data, out int line, out int column)
+        {
+            line = 0;
+            column = 0;
+            if (string.IsNullOrEmpty(data) || !data.StartsWith(CaretNavigationPrefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var payload = data.Substring(CaretNavigationPrefix.Length);
+            var parts = payload.Split(',');
+            return parts.Length == 2
+                   && int.TryParse(parts[0], out line)
+                   && int.TryParse(parts[1], out column);
+        }
+
+        private bool TryGetTextViewCaret(out int line, out int column)
+        {
+            line = 0;
+            column = 0;
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var view = _textEditorHost?.WpfTextView;
+            if (view != null && ErrorHandler.Succeeded(view.GetCaretPos(out line, out column)))
+            {
+                return true;
+            }
+
+            if (_textEditorHost?.VsCodeWindow is IVsCodeWindow codeWindow)
+            {
+                IVsTextView active = null;
+                if (ErrorHandler.Succeeded(codeWindow.GetLastActiveView(out active)) && active != null
+                    && ErrorHandler.Succeeded(active.GetCaretPos(out line, out column)))
+                {
+                    return true;
+                }
+
+                if (ErrorHandler.Succeeded(codeWindow.GetPrimaryView(out active)) && active != null
+                    && ErrorHandler.Succeeded(active.GetCaretPos(out line, out column)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool TrySetTextViewCaret(int line, int column)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                var view = _textEditorHost?.WpfTextView;
+                if (view == null && _textEditorHost?.VsCodeWindow is IVsCodeWindow codeWindow)
+                {
+                    if (ErrorHandler.Failed(codeWindow.GetLastActiveView(out view)) || view == null)
+                    {
+                        codeWindow.GetPrimaryView(out view);
+                    }
+                }
+
+                if (view == null)
+                {
+                    return false;
+                }
+
+                ErrorHandler.ThrowOnFailure(view.SetCaretPos(line, Math.Max(0, column)));
+                ErrorHandler.ThrowOnFailure(view.CenterLines(line, 1));
+                view.SendExplicitFocus();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Debug(ex, "TrySetTextViewCaret 失败");
+                return false;
+            }
+        }
+
         int IVsDocOutlineProvider.GetOutlineCaption(VSOUTLINECAPTION nCaptionType, out string pbstrCaption)
         {
             if (_textEditorHost.VsCodeWindow is IVsDocOutlineProvider dop)

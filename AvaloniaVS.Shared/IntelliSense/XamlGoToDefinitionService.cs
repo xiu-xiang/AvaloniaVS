@@ -1,21 +1,26 @@
 using System;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Ide.CompletionEngine;
 using AvaloniaVS.Models;
+using AvaloniaVS.Shared.Views;
 using EnvDTE;
 using EnvDTE80;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
+using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.TextManager.Interop;
 using Microsoft.VisualStudio.Threading;
 using RoslynProject = Microsoft.CodeAnalysis.Project;
+using IOleServiceProvider = Microsoft.VisualStudio.OLE.Interop.IServiceProvider;
 
 namespace AvaloniaVS.IntelliSense
 {
@@ -100,6 +105,9 @@ namespace AvaloniaVS.IntelliSense
                 return;
             }
 
+            // 源位置压栈：AXAML 自定义编辑器不会像 C# 那样自动登记 go-back marker
+            TryPushCurrentNavigationPoint();
+
             switch (target.TargetKind)
             {
                 case XamlNavigationTarget.Kind.EventHandler:
@@ -114,6 +122,99 @@ namespace AvaloniaVS.IntelliSense
                 default:
                     NavigateToSymbolAsync(target.TypeFullName, target.MemberName).FireAndForget();
                     break;
+            }
+        }
+
+        /// <summary>
+        /// 将「当前窗口 + 光标」压入 VS BF 栈。
+        /// 转到定义必须在跳转前（源）与跳转成功后（目标）各调用一次：
+        /// 仅压源时栈上只有 current、没有 previous，工具栏回退按钮不会点亮。
+        /// </summary>
+        private static void TryPushCurrentNavigationPoint()
+        {
+            try
+            {
+                ThreadHelper.ThrowIfNotOnUIThread();
+
+                var monitorSelection = Package.GetGlobalService(typeof(SVsShellMonitorSelection)) as IVsMonitorSelection;
+                if (monitorSelection == null)
+                {
+                    return;
+                }
+
+                monitorSelection.GetCurrentElementValue(
+                    (uint)VSConstants.VSSELELEMID.SEID_WindowFrame,
+                    out var frameObj);
+                if (frameObj is not IVsWindowFrame frame)
+                {
+                    return;
+                }
+
+                if (ErrorHandler.Succeeded(frame.GetProperty((int)__VSFPROPID.VSFPROPID_DocView, out var docView)))
+                {
+                    // 优先强类型：保证走 AddNewBFNavigationItem(axaml-caret, EditorPane)
+                    if (docView is EditorPane editorPane && editorPane.TryAddCaretNavigationItem(frame))
+                    {
+                        return;
+                    }
+
+                    if (docView is IVsBackForwardNavigation2 bf2 && bf2.RequestAddNavigationItem(frame))
+                    {
+                        return;
+                    }
+
+                    // COM 包装：punk 用 DocView，回退时仍会打到 EditorPane.NavigateTo
+                    var caretData = TryGetCaretNavigationData(frame, docView);
+                    var uiShell = Package.GetGlobalService(typeof(SVsUIShell)) as IVsUIShell;
+                    if (uiShell != null && !string.IsNullOrEmpty(caretData))
+                    {
+                        uiShell.AddNewBFNavigationItem(frame, caretData, docView, 0);
+                    }
+                }
+            }
+            catch
+            {
+                // 忽略：不影响跳转本身
+            }
+        }
+
+        /// <summary>
+        /// 读取当前文本视图光标，编码为 EditorPane 可还原的导航数据。
+        /// </summary>
+        private static string TryGetCaretNavigationData(IVsWindowFrame frame, object docView = null)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                if (docView == null
+                    && ErrorHandler.Failed(frame.GetProperty((int)__VSFPROPID.VSFPROPID_DocView, out docView)))
+                {
+                    return null;
+                }
+
+                if (docView is not IVsCodeWindow codeWindow)
+                {
+                    return null;
+                }
+
+                IVsTextView view = null;
+                if (ErrorHandler.Failed(codeWindow.GetLastActiveView(out view)) || view == null)
+                {
+                    codeWindow.GetPrimaryView(out view);
+                }
+
+                if (view == null)
+                {
+                    return null;
+                }
+
+                ErrorHandler.ThrowOnFailure(view.GetCaretPos(out var line, out var column));
+                return EditorPane.EncodeCaretNavigationData(line, column);
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -1448,7 +1549,339 @@ namespace AvaloniaVS.IntelliSense
                 lineSpan.StartLinePosition.Character);
         }
 
+        /// <summary>
+        /// 打开文件并定位光标。成功后把目标位置再压入 BF 栈（与 Navigate 中的源压栈成对）。
+        /// </summary>
         private static bool OpenFileAt(string filePath, int line, int column)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                if (string.IsNullOrEmpty(filePath))
+                {
+                    return false;
+                }
+
+                column = Math.Max(0, column);
+                var opened = false;
+
+                // 1) 确保文档打开
+                if (!TryEnsureTextBuffer(filePath, out var textBuffer) || textBuffer == null)
+                {
+                    opened = OpenFileAtViaDte(filePath, line, column);
+                }
+                // 2) 优先在 AXAML CodeWindow 上设光标（避免 TextManager 打开非设计器视图）
+                else if (TrySetCaretOnCodeWindowView(filePath, line, column))
+                {
+                    opened = true;
+                }
+                // 3) TextManager / DTE 回退
+                else if (TryNavigateWithTextManager(textBuffer, line, column))
+                {
+                    opened = true;
+                }
+                else
+                {
+                    opened = OpenFileAtViaDte(filePath, line, column);
+                }
+
+                // 目标成为 current，源变为 previous → 回退按钮点亮
+                if (opened)
+                {
+                    TryPushCurrentNavigationPoint();
+                }
+
+                return opened;
+            }
+            catch
+            {
+                var opened = OpenFileAtViaDte(filePath, line, column);
+                if (opened)
+                {
+                    TryPushCurrentNavigationPoint();
+                }
+
+                return opened;
+            }
+        }
+
+        /// <summary>
+        /// 通过文档的 IVsCodeWindow 主视图设置光标并居中（兼容 Avalonia 设计器 DocView）。
+        /// </summary>
+        private static bool TrySetCaretOnCodeWindowView(string filePath, int line, int column)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                if (!TryGetWindowFrameForFile(filePath, out var frame) || frame == null)
+                {
+                    return false;
+                }
+
+                ErrorHandler.ThrowOnFailure(frame.Show());
+
+                if (ErrorHandler.Failed(frame.GetProperty((int)__VSFPROPID.VSFPROPID_DocView, out var docView))
+                    || docView is not IVsCodeWindow codeWindow)
+                {
+                    return false;
+                }
+
+                IVsTextView view = null;
+                if (ErrorHandler.Failed(codeWindow.GetLastActiveView(out view)) || view == null)
+                {
+                    if (ErrorHandler.Failed(codeWindow.GetPrimaryView(out view)) || view == null)
+                    {
+                        return false;
+                    }
+                }
+
+                ErrorHandler.ThrowOnFailure(view.SetCaretPos(line, column));
+                ErrorHandler.ThrowOnFailure(view.CenterLines(line, 1));
+                view.SendExplicitFocus();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryGetWindowFrameForFile(string filePath, out IVsWindowFrame frame)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            frame = null;
+
+            try
+            {
+                var uiShell = Package.GetGlobalService(typeof(SVsUIShell)) as IVsUIShell;
+                if (uiShell == null)
+                {
+                    return false;
+                }
+
+                ErrorHandler.ThrowOnFailure(uiShell.GetDocumentWindowEnum(out var windowEnum));
+                if (windowEnum == null)
+                {
+                    return false;
+                }
+
+                var frames = new IVsWindowFrame[1];
+                while (windowEnum.Next(1, frames, out var fetched) == VSConstants.S_OK && fetched == 1)
+                {
+                    var candidate = frames[0];
+                    if (candidate == null)
+                    {
+                        continue;
+                    }
+
+                    if (ErrorHandler.Succeeded(candidate.GetProperty((int)__VSFPROPID.VSFPROPID_pszMkDocument, out var mk))
+                        && mk is string path
+                        && string.Equals(path, filePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        frame = candidate;
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 通过 TextManager 定位光标。
+        /// </summary>
+        private static bool TryNavigateWithTextManager(IVsTextBuffer textBuffer, int line, int column)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var textManager = Package.GetGlobalService(typeof(SVsTextManager)) as IVsTextManager;
+            if (textManager == null || textBuffer == null)
+            {
+                return false;
+            }
+
+            var views = new[]
+            {
+                VSConstants.LOGVIEWID.TextView_guid,
+                VSConstants.LOGVIEWID.Code_guid,
+                VSConstants.LOGVIEWID.Primary_guid,
+            };
+
+            foreach (var view in views)
+            {
+                var logicalView = view;
+                var hr = textManager.NavigateToLineAndColumn(
+                    textBuffer,
+                    ref logicalView,
+                    line,
+                    column,
+                    line,
+                    column);
+                if (ErrorHandler.Succeeded(hr))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 确保文档已打开并取得 IVsTextBuffer（AXAML DocData 即为文本缓冲）。
+        /// </summary>
+        private static bool TryEnsureTextBuffer(string filePath, out IVsTextBuffer textBuffer)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            textBuffer = null;
+
+            if (TryGetTextBufferFromRdt(filePath, out textBuffer))
+            {
+                return true;
+            }
+
+            try
+            {
+                // 打开文档（不直接 SetCaret，避免绕过导航栈）
+                VsShellUtilities.OpenDocument(
+                    ServiceProvider.GlobalProvider,
+                    filePath,
+                    Guid.Empty,
+                    out _,
+                    out _,
+                    out IVsWindowFrame frame);
+
+                if (frame != null)
+                {
+                    ErrorHandler.ThrowOnFailure(frame.Show());
+                    if (TryGetTextBufferFromFrame(frame, out textBuffer))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // 继续尝试 OpenDocumentViaProject / RDT
+            }
+
+            try
+            {
+                var openDoc = Package.GetGlobalService(typeof(SVsUIShellOpenDocument)) as IVsUIShellOpenDocument;
+                if (openDoc != null)
+                {
+                    var logicalView = VSConstants.LOGVIEWID.TextView_guid;
+                    var hr = openDoc.OpenDocumentViaProject(
+                        filePath,
+                        ref logicalView,
+                        out IOleServiceProvider _,
+                        out IVsUIHierarchy _,
+                        out uint _,
+                        out IVsWindowFrame frame);
+                    if (ErrorHandler.Succeeded(hr) && frame != null)
+                    {
+                        frame.Show();
+                        if (TryGetTextBufferFromFrame(frame, out textBuffer))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // 忽略
+            }
+
+            return TryGetTextBufferFromRdt(filePath, out textBuffer);
+        }
+
+        private static bool TryGetTextBufferFromFrame(IVsWindowFrame frame, out IVsTextBuffer textBuffer)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            textBuffer = null;
+
+            try
+            {
+                ErrorHandler.ThrowOnFailure(
+                    frame.GetProperty((int)__VSFPROPID.VSFPROPID_DocData, out var docData));
+                textBuffer = ExtractTextBuffer(docData);
+                return textBuffer != null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryGetTextBufferFromRdt(string filePath, out IVsTextBuffer textBuffer)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            textBuffer = null;
+
+            var rdt = Package.GetGlobalService(typeof(SVsRunningDocumentTable)) as IVsRunningDocumentTable;
+            if (rdt == null)
+            {
+                return false;
+            }
+
+            IntPtr punk = IntPtr.Zero;
+            try
+            {
+                var hr = rdt.FindAndLockDocument(
+                    (uint)_VSRDTFLAGS.RDT_NoLock,
+                    filePath,
+                    out _,
+                    out _,
+                    out punk,
+                    out _);
+                if (ErrorHandler.Failed(hr) || punk == IntPtr.Zero)
+                {
+                    return false;
+                }
+
+                var docData = Marshal.GetObjectForIUnknown(punk);
+                textBuffer = ExtractTextBuffer(docData);
+                return textBuffer != null;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (punk != IntPtr.Zero)
+                {
+                    Marshal.Release(punk);
+                }
+            }
+        }
+
+        private static IVsTextBuffer ExtractTextBuffer(object docData)
+        {
+            if (docData is IVsTextBuffer buffer)
+            {
+                return buffer;
+            }
+
+            if (docData is IVsTextBufferProvider provider)
+            {
+                provider.GetTextBuffer(out var lines);
+                return lines;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// DTE 回退打开（不保证写入导航栈，仅作兜底）。
+        /// </summary>
+        private static bool OpenFileAtViaDte(string filePath, int line, int column)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
 
@@ -1485,14 +1918,47 @@ namespace AvaloniaVS.IntelliSense
 
             try
             {
-                if (string.IsNullOrEmpty(filePath) || offset < 0 || !System.IO.File.Exists(filePath))
+                if (string.IsNullOrEmpty(filePath) || offset < 0)
                 {
                     return false;
                 }
 
-                var content = System.IO.File.ReadAllText(filePath);
-                GetLineColumn(content, Math.Min(offset, content.Length), out var line, out var column);
-                return OpenFileAt(filePath, line, column);
+                // 优先用已打开缓冲区文本计算行列（含未保存内容）
+                string content = null;
+                if (TryGetTextBufferFromRdt(filePath, out var buffer)
+                    && buffer is IVsTextLines lines
+                    && TryGetTextLinesContent(lines, out content)
+                    && !string.IsNullOrEmpty(content))
+                {
+                    GetLineColumn(content, Math.Min(offset, content.Length), out var line, out var column);
+                    return OpenFileAt(filePath, line, column);
+                }
+
+                if (!System.IO.File.Exists(filePath))
+                {
+                    return false;
+                }
+
+                content = System.IO.File.ReadAllText(filePath);
+                GetLineColumn(content, Math.Min(offset, content.Length), out var diskLine, out var diskColumn);
+                return OpenFileAt(filePath, diskLine, diskColumn);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryGetTextLinesContent(IVsTextLines lines, out string content)
+        {
+            content = null;
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                ErrorHandler.ThrowOnFailure(lines.GetLastLineIndex(out var lastLine, out var lastIndex));
+                ErrorHandler.ThrowOnFailure(lines.GetLineText(0, 0, lastLine, lastIndex, out content));
+                return content != null;
             }
             catch
             {

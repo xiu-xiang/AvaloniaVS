@@ -74,7 +74,7 @@
                             <Button Classes="local-danger" Content="local-danger → Style" />
                         </WrapPanel>
                         <TextBox Classes="field"
-                                 Watermark="Classes=field → 上方 TextBox.field" />
+                                PlaceholderText="请输入内容..." />
                     </StackPanel>
                 </Border>
 
